@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -77,8 +78,23 @@ void main() {
       ));
       await tester.pumpAndSettle();
       for (var pass = 0; pass < 3; pass++) {
-        for (final label in ['القرآن', 'الاستماع', 'مكتبتي', 'المزيد', 'الرئيسية']) {
-          await tester.tap(find.text(label).last);
+        for (final (index, label) in [
+          (1, 'القرآن'),
+          (2, 'الاستماع'),
+          (3, 'مكتبتي'),
+          (4, 'المزيد'),
+          (0, 'الرئيسية'),
+        ]) {
+          final rail = find.byType(NavigationRail);
+          final bar = find.byType(NavigationBar);
+          expect(rail.evaluate().isNotEmpty || bar.evaluate().isNotEmpty, isTrue,
+              reason: 'navigation shell missing at tab $label pass $pass');
+          final destination = rail.evaluate().isNotEmpty
+              ? find.descendant(of: rail, matching: find.text(label))
+              : find.descendant(of: bar, matching: find.text(label));
+          expect(destination, findsOneWidget,
+              reason: 'destination $index missing at pass $pass');
+          await tester.tap(destination);
           await tester.pumpAndSettle();
           expect(tester.takeException(), isNull, reason: 'tab $label pass $pass');
         }

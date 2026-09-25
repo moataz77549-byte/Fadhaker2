@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -38,7 +39,7 @@ void main() {
   });
 
   test('network failure uses previously cached channels with warning', () async {
-    final online = repository(MockClient((request) async => http.Response(row, 200)));
+    final online = repository(MockClient((request) async => http.Response.bytes(utf8.encode(row), 200)));
     expect((await online.loadResult()).channels, hasLength(1));
     online.dispose();
 
@@ -61,7 +62,7 @@ void main() {
     ));
     denied.dispose();
     final unconfigured = repository(
-      MockClient((request) async => http.Response(row, 200)), key: '',
+      MockClient((request) async => http.Response.bytes(utf8.encode(row), 200)), key: '',
     );
     await expectLater(unconfigured.loadResult(), throwsA(
       isA<VideoCatalogException>().having(
