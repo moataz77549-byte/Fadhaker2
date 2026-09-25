@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:fadhkur_mobile/main.dart';
+import 'package:fadhkur_mobile/features/search/presentation/search_screen.dart';
 import 'package:fadhkur_mobile/core/services/app_services.dart';
 import 'package:fadhkur_mobile/core/config/features_manager.dart';
 import 'package:fadhkur_mobile/core/repositories/fadhkur_repository.dart';
@@ -101,9 +102,11 @@ void main() {
       }
       await tester.tap(find.byTooltip('البحث'));
       await tester.pumpAndSettle();
+      expect(find.byType(SearchScreen), findsOneWidget);
       expect(tester.takeException(), isNull);
-      await tester.pageBack();
+      await tester.binding.handlePopRoute();
       await tester.pumpAndSettle();
+      expect(find.byType(SearchScreen), findsNothing);
       expect(tester.takeException(), isNull);
     });
 
