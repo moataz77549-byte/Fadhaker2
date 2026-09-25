@@ -35,11 +35,6 @@ android {
         targetSdk = 36
         versionCode = flutter.versionCode
         versionName = flutter.versionName
-        // Restrict bundled plugin JNI libraries as well as Flutter's native output.
-        ndk {
-            abiFilters.clear()
-            abiFilters.add("arm64-v8a")
-        }
     }
 
     buildTypes {
