@@ -24,8 +24,8 @@ void main() {
           200,
         );
       }
-      return http.Response(
-        '[{"id":"reciter-1","name_ar":"قارئ موثق","default_riwayah":"حفص"}]',
+      return http.Response.bytes(
+        utf8.encode('[{"id":"reciter-1","name_ar":"قارئ موثق","default_riwayah":"حفص"}]'),
         200,
       );
     }));
