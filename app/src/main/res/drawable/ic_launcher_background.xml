@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Deep Indigo Primary #243B6B -->
+    <path
+        android:fillColor="#243B6B"
+        android:pathData="M0,0h108v108h-108z" />
+    <!-- Subtle secondary radial tone -->
+    <path
+        android:fillColor="#162746"
+        android:pathData="M54,10C30,10 10,30 10,54C10,78 30,98 54,98C78,98 98,78 98,54C98,30 78,10 54,10Z" />
+    <!-- Fine geometric star accent -->
+    <path
+        android:fillColor="#0D1D3A"
+        android:pathData="M54,20L62,40L84,40L66,54L73,76L54,62L35,76L42,54L24,40L46,40Z" />
+</vector>

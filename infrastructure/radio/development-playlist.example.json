@@ -1,0 +1,7 @@
+{
+  "tracks": [
+    { "media_id": null, "title": "Development Track A", "path": "/tmp/tarteel/radio-fixtures/track-a.m4a" },
+    { "media_id": null, "title": "Development Track B", "path": "/tmp/tarteel/radio-fixtures/track-b.m4a" },
+    { "media_id": null, "title": "Development Track C", "path": "/tmp/tarteel/radio-fixtures/track-c.m4a" }
+  ]
+}

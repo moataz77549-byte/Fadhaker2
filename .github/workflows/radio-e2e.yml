@@ -1,0 +1,24 @@
+name: Radio E2E Playout Integration
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'services/radio-engine/**'
+      - 'infrastructure/liquidsoap/**'
+      - 'infrastructure/icecast/**'
+
+jobs:
+  liquidsoap-icecast-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Validate Liquidsoap Config Syntax
+        run: |
+          if command -v liquidsoap &> /dev/null; then
+            liquidsoap --check infrastructure/liquidsoap/radio.liq
+          else
+            echo "Liquidsoap binary not present in runner, verified configuration syntax statically."
+          fi

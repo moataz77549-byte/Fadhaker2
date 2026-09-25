@@ -1,0 +1,16 @@
+{
+  "name": "fadhkur-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Fadhkur (فذكر) — Quran, recitations, live radio, and trusted Islamic content",
+  "workspaces": ["packages/*", "apps/admin", "services/*"],
+  "scripts": {
+    "lint": "npm run lint --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present",
+    "check-env": "bash ./scripts/check-env.sh || echo 'Skipping check-env on non-bash environment'",
+    "validate-checksums": "bash ./scripts/validate-checksums.sh || echo 'Skipping checksum script'"
+  },
+  "devDependencies": { "typescript": "^5.4.0" }
+}

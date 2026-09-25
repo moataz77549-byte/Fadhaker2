@@ -1,0 +1,78 @@
+# === Android / Gradle ===
+*.iml
+.gradle
+.kotlin
+/local.properties
+local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+/build
+/app/build
+/captures
+.externalNativeBuild
+.cxx
+
+# === Firebase / Google credentials ===
+# Client config should be injected per environment; real files stay out of Git.
+google-services.json
+**/google-services.json
+GoogleService-Info.plist
+**/GoogleService-Info.plist
+
+# Never commit server credentials / service-account keys.
+*.service-account.json
+*service-account*.json
+*service_account*.json
+*firebase-admin*.json
+*firebase-adminsdk*.json
+firebase-admin.json
+credentials.json
+service-account.json
+
+# === Signing keys / certificates ===
+*.keystore
+*.jks
+*.p12
+*.pfx
+*.pem
+*.key
+debug.keystore
+
+# === Environment variables / secret files ===
+.env
+.env.*
+!.env.example
+!**/.env.example
+*.env
+*.secrets
+secrets.*
+*.secret
+
+# === Node.js ===
+node_modules/
+dist/
+.next/
+.turbo/
+
+# === Flutter ===
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+build/
+
+# === OS Files ===
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# === IDE ===
+.vscode/settings.json
+*.swp
+*.swo
+
+app/google-services.json

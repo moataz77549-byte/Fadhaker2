@@ -1,0 +1,59 @@
+name: fadhkur_mobile
+description: "Fadhkur (فذكر) — Holy Quran Recitations, Curated 24/7 Radios, and Mushaf Reader"
+publish_to: "none"
+version: 1.0.69-beta.1+69
+
+environment:
+  sdk: ">=3.2.0 <4.0.0"
+  flutter: ">=3.16.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  flutter_riverpod: ^2.5.1
+  just_audio: ^0.9.36
+  audio_service: ^0.18.12
+  audio_session: ^0.1.18
+  shared_preferences: ^2.2.2
+  http: ^1.2.2
+  crypto: ^3.0.3
+  sqflite: ^2.3.2
+  path_provider: ^2.1.2
+  workmanager: 0.9.0+3
+  supabase_flutter: ^2.3.4
+  firebase_core: ^3.15.2
+  firebase_messaging: ^15.2.10
+  firebase_crashlytics: ^4.0.0
+  flutter_local_notifications: ^17.0.0
+  timezone: ^0.9.4
+  geolocator: ^12.0.0
+  package_info_plus: ^8.3.0
+  cached_network_image: ^3.3.1
+  share_plus: ^10.1.2
+  video_player: ^2.8.0
+  chewie: ^1.8.0
+  youtube_player_flutter: ^9.0.0
+  url_launcher: ^6.3.2
+  # روابط خارجية (custom scheme مثل fadhkur://) — تُوجَّه عبر نفس
+  # allowlist الروابط في core/routing/notification_deep_links.dart.
+  app_links: ^6.1.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+# Keep only Android recording compatibility overrides.
+dependency_overrides:
+  # WorkManager 0.9 uses federated packages. Pin the mutually-compatible
+  # family because later 0.9.x platform-interface releases added APIs before
+  # every platform implementation implemented them. Android is the only
+  # product target, but Flutter test still compiles the federated defaults.
+  workmanager_android: 0.9.0+2
+  workmanager_apple: 0.9.1+2
+  workmanager_platform_interface: 0.9.1+1
+
+flutter:
+  uses-material-design: true

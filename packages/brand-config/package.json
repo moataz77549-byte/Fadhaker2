@@ -1,0 +1,22 @@
+{
+  "name": "@fadhkur/brand-config",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Central brand tokens and configuration for Fadhkur platform",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "src",
+    "tokens.json"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src --ext .ts"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  }
+}

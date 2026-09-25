@@ -1,0 +1,166 @@
+name: Fadhkur CI Pipeline
+
+on:
+  push:
+    branches: [ main, develop, feat/islamic-content-rights-20260925 ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  validate-environment-and-contracts:
+    name: Validate Environment Templates & Checksums
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify Environment Templates
+        run: |
+          chmod +x scripts/check-env.sh scripts/validate-checksums.sh
+          ./scripts/check-env.sh
+          ./scripts/validate-checksums.sh
+
+  edge-contract-tests:
+    name: Edge Provider & Smart Radio Contract Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run pure TypeScript adapter/resolver tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --experimental-strip-types --test             supabase/functions/provider-sync/providers/quranenc_adapter_test.mjs             supabase/functions/provider-sync/providers/hadeethenc_adapter_test.mjs             supabase/functions/smart-radio-resolve/resolver_test.mjs
+
+  admin-nextjs:
+    name: Admin Next.js (Build & Lint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck admin
+        run: pnpm --dir apps/admin run typecheck
+
+  mobile-flutter:
+    name: Flutter Mobile (Test & Analyze)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.7'
+          channel: 'stable'
+      - name: Analyze & Test Mobile
+        working-directory: apps/mobile
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter pub get
+          flutter analyze
+          flutter test
+
+  mobile-android-debug:
+    name: Android Debug APK (Native Build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.7'
+          channel: 'stable'
+          cache: true
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+
+      - name: Install Flutter dependencies
+        working-directory: apps/mobile
+        run: flutter pub get
+
+      - name: Prepare Android debug build environment
+        env:
+          FIREBASE_GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.FIREBASE_GOOGLE_SERVICES_JSON_BASE64 }}
+        working-directory: apps/mobile
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter_root="$(dirname "$(dirname "$(command -v flutter)")")"
+          printf 'flutter.sdk=%s\n' "$flutter_root" > android/local.properties
+          test -n "$FIREBASE_GOOGLE_SERVICES_JSON_BASE64" || { echo 'Missing FIREBASE_GOOGLE_SERVICES_JSON_BASE64' >&2; exit 1; }
+          printf '%s' "$FIREBASE_GOOGLE_SERVICES_JSON_BASE64" | base64 --decode > android/app/google-services.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          data = json.loads(Path('android/app/google-services.json').read_text())
+          assert data['project_info']['project_id'] == 'fadhkur-2f78c'
+          assert any(c.get('client_info', {}).get('android_client_info', {}).get('package_name') == 'app.fadhkur' for c in data['client'])
+          PY
+
+          wrapper_tmp="$(mktemp -d)"
+          printf 'rootProject.name = "wrapper-bootstrap"\n' > "$wrapper_tmp/settings.gradle"
+          (
+            cd "$wrapper_tmp"
+            gradle wrapper --gradle-version 8.13 --distribution-type bin --no-daemon
+          )
+          mkdir -p android/gradle/wrapper
+          cp "$wrapper_tmp/gradlew" android/gradlew
+          cp "$wrapper_tmp/gradlew.bat" android/gradlew.bat
+          cp "$wrapper_tmp/gradle/wrapper/gradle-wrapper.jar" android/gradle/wrapper/gradle-wrapper.jar
+          cp "$wrapper_tmp/gradle/wrapper/gradle-wrapper.properties" android/gradle/wrapper/gradle-wrapper.properties
+          chmod +x android/gradlew
+          rm -rf "$wrapper_tmp"
+
+          test -x android/gradlew
+          grep -q 'gradle-8.13-bin.zip' android/gradle/wrapper/gradle-wrapper.properties
+          grep -q 'version "8.11.1"' android/settings.gradle.kts
+
+      - name: Build Android debug APK
+        env:
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+          FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
+          FIREBASE_ANDROID_APP_ID: ${{ secrets.FIREBASE_ANDROID_APP_ID }}
+          FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.FIREBASE_MESSAGING_SENDER_ID }}
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          FIREBASE_STORAGE_BUCKET: ${{ secrets.FIREBASE_STORAGE_BUCKET }}
+        working-directory: apps/mobile
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in SUPABASE_PUBLISHABLE_KEY FIREBASE_API_KEY FIREBASE_ANDROID_APP_ID FIREBASE_MESSAGING_SENDER_ID FIREBASE_PROJECT_ID FIREBASE_STORAGE_BUCKET; do
+            test -n "${!name:-}" || { echo "Missing $name" >&2; exit 1; }
+          done
+          flutter build apk --debug --no-pub --target-platform android-arm64 \
+            --dart-define=APP_ENV=production \
+            --dart-define=SUPABASE_URL=https://ttvasynaxkkcwrmvlorg.supabase.co \
+            --dart-define=SUPABASE_PUBLISHABLE_KEY="$SUPABASE_PUBLISHABLE_KEY" \
+            --dart-define=FIREBASE_API_KEY="$FIREBASE_API_KEY" \
+            --dart-define=FIREBASE_ANDROID_APP_ID="$FIREBASE_ANDROID_APP_ID" \
+            --dart-define=FIREBASE_MESSAGING_SENDER_ID="$FIREBASE_MESSAGING_SENDER_ID" \
+            --dart-define=FIREBASE_PROJECT_ID="$FIREBASE_PROJECT_ID" \
+            --dart-define=FIREBASE_STORAGE_BUCKET="$FIREBASE_STORAGE_BUCKET"
+          test -s build/app/outputs/flutter-apk/app-debug.apk
+
+      - name: Upload Android debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: fadhkur-integration-debug-apk
+          path: apps/mobile/build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: error
+          retention-days: 7

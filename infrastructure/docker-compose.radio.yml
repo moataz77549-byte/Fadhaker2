@@ -1,0 +1,15 @@
+services:
+  icecast:
+    build: ./icecast
+    env_file: ./icecast/.env
+    ports: ["127.0.0.1:8000:8000"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8000/status-json.xsl"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    read_only: true
+    tmpfs: ["/tmp", "/var/log/icecast2"]
+    security_opt: ["no-new-privileges:true"]

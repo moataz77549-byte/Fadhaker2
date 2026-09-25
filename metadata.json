@@ -1,0 +1,6 @@
+{
+  "name": "فذكر",
+  "description": "منصة وتطبيق فذكر — تلاوات قرآنية، إذاعات مدارة، ومصحف شريف",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

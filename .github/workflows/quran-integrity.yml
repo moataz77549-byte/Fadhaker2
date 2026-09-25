@@ -1,0 +1,24 @@
+name: Quran Canonical Integrity Gate
+
+on:
+  push:
+    paths:
+      - 'data/quran/**'
+      - 'scripts/validate-checksums.sh'
+  pull_request:
+    paths:
+      - 'data/quran/**'
+      - 'scripts/validate-checksums.sh'
+
+jobs:
+  verify-quran-data:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Validate Checksums & Fail-Closed Rules
+        run: |
+          chmod +x scripts/validate-checksums.sh
+          ./scripts/validate-checksums.sh

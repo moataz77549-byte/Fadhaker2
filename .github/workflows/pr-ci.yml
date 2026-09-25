@@ -1,0 +1,81 @@
+name: PR CI (Deterministic Quality Gate)
+
+on:
+  pull_request:
+    branches: [main, master]
+  push:
+    branches: [main, master]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quran-integrity:
+    name: Quran Canonical Integrity Gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Run Fail-Closed Checksum & Data Validation
+        run: |
+          chmod +x scripts/validate-checksums.sh
+          ./scripts/validate-checksums.sh
+
+  edge-contract-tests:
+    name: Edge Provider & Smart Radio Contract Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run pure TypeScript adapter/resolver tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --experimental-strip-types --test             supabase/functions/provider-sync/providers/quranenc_adapter_test.mjs             supabase/functions/provider-sync/providers/hadeethenc_adapter_test.mjs             supabase/functions/smart-radio-resolve/resolver_test.mjs
+
+  admin-quality-gate:
+    name: Admin Web Lint & Build Gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - name: Install Admin Dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck Admin Next.js
+        run: pnpm --dir apps/admin exec tsc --noEmit
+
+  backend-services-gate:
+    name: Audio Worker & Radio Engine Unit Gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - name: Install Workspace Dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Verify Audio Worker & Radio Engine TypeScript
+        run: |
+          pnpm --dir services/audio-worker exec tsc --noEmit
+          pnpm --dir services/radio-engine exec tsc --noEmit

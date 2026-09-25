@@ -1,0 +1,291 @@
+name: Android Production Build — فذكر
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'apps/mobile/pubspec.yaml'
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-production-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-android-release:
+    name: Build signed Android APK & AAB
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: apps/mobile
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate canonical Quran checksums
+        working-directory: .
+        run: bash scripts/validate-checksums.sh
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.7'
+          channel: stable
+          cache: true
+
+      - name: Setup Gradle 8.13
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+
+      - name: Read application version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          raw="$(awk '/^version: / {print $2; exit}' pubspec.yaml)"
+          test -n "$raw" || { echo 'Missing version in pubspec.yaml.' >&2; exit 1; }
+          name="${raw%%+*}"
+          code="${raw##*+}"
+          [[ "$code" =~ ^[0-9]+$ ]] || { echo "Invalid build code: $code" >&2; exit 1; }
+          echo "raw=$raw" >> "$GITHUB_OUTPUT"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "Building Fadhkur $name+$code"
+
+      - name: Verify tag matches app version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="v${{ steps.version.outputs.name }}"
+          test "$GITHUB_REF_NAME" = "$expected" || {
+            echo "Tag $GITHUB_REF_NAME does not match pubspec version $expected." >&2
+            exit 1
+          }
+
+      - name: Prepare Firebase Android configuration
+        env:
+          FIREBASE_GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.FIREBASE_GOOGLE_SERVICES_JSON_BASE64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$FIREBASE_GOOGLE_SERVICES_JSON_BASE64" || {
+            echo 'Missing FIREBASE_GOOGLE_SERVICES_JSON_BASE64 repository secret.' >&2
+            exit 1
+          }
+          printf '%s' "$FIREBASE_GOOGLE_SERVICES_JSON_BASE64" | base64 --decode > android/app/google-services.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('android/app/google-services.json')
+          data = json.loads(p.read_text())
+          packages = {
+              c.get('client_info', {})
+               .get('android_client_info', {})
+               .get('package_name')
+              for c in data.get('client', [])
+          }
+          if data.get('project_info', {}).get('project_id') != 'fadhkur-2f78c':
+              raise SystemExit('google-services.json project mismatch')
+          if 'app.fadhkur' not in packages:
+              raise SystemExit('google-services.json does not contain package app.fadhkur')
+          PY
+
+      - name: Prepare Android signing material
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD ANDROID_STORE_PASSWORD; do
+            if [ -z "${!name:-}" ]; then
+              echo "Missing repository secret: $name" >&2
+              exit 1
+            fi
+          done
+          mkdir -p android/keystore
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/keystore/upload-keystore.jks
+          chmod 600 android/keystore/upload-keystore.jks
+          umask 077
+          cat > android/key.properties <<EOF
+          storePassword=$ANDROID_STORE_PASSWORD
+          keyPassword=$ANDROID_KEY_PASSWORD
+          keyAlias=$ANDROID_KEY_ALIAS
+          storeFile=keystore/upload-keystore.jks
+          EOF
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Prepare Gradle wrapper
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter_root="$(dirname "$(dirname "$(command -v flutter)")")"
+          printf 'flutter.sdk=%s\n' "$flutter_root" > android/local.properties
+          wrapper_tmp="$(mktemp -d)"
+          printf 'rootProject.name = "wrapper-bootstrap"\n' > "$wrapper_tmp/settings.gradle"
+          (
+            cd "$wrapper_tmp"
+            gradle wrapper --gradle-version 8.13 --distribution-type bin --no-daemon
+          )
+          mkdir -p android/gradle/wrapper
+          cp "$wrapper_tmp/gradlew" android/gradlew
+          cp "$wrapper_tmp/gradlew.bat" android/gradlew.bat
+          cp "$wrapper_tmp/gradle/wrapper/gradle-wrapper.jar" android/gradle/wrapper/gradle-wrapper.jar
+          cp "$wrapper_tmp/gradle/wrapper/gradle-wrapper.properties" android/gradle/wrapper/gradle-wrapper.properties
+          chmod +x android/gradlew
+          rm -rf "$wrapper_tmp"
+
+      - name: Verify Android project invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f android/settings.gradle.kts
+          test -f android/build.gradle.kts
+          test -f android/app/build.gradle.kts
+          grep -q 'applicationId = "app.fadhkur"' android/app/build.gradle.kts
+          grep -q 'minSdk = 26' android/app/build.gradle.kts
+          grep -q 'compileSdk = 36' android/app/build.gradle.kts
+          grep -q 'targetSdk = 36' android/app/build.gradle.kts
+          grep -q 'version "8.11.1"' android/settings.gradle.kts
+          test -x android/gradlew
+          test -s android/gradle/wrapper/gradle-wrapper.jar
+          grep -q 'gradle-8.13-bin.zip' android/gradle/wrapper/gradle-wrapper.properties
+          ! grep -R -q 'io.flutter.app.FlutterActivity' android
+          ! grep -R -q 'PluginRegistry.Registrar' android
+
+      - name: Analyze and test
+        run: |
+          flutter analyze
+          flutter test
+
+      - name: Build signed release APK
+        env: &runtime_env
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+          FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
+          FIREBASE_ANDROID_APP_ID: ${{ secrets.FIREBASE_ANDROID_APP_ID }}
+          FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.FIREBASE_MESSAGING_SENDER_ID }}
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          FIREBASE_STORAGE_BUCKET: ${{ secrets.FIREBASE_STORAGE_BUCKET }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in SUPABASE_PUBLISHABLE_KEY FIREBASE_API_KEY FIREBASE_ANDROID_APP_ID FIREBASE_MESSAGING_SENDER_ID FIREBASE_PROJECT_ID FIREBASE_STORAGE_BUCKET; do
+            test -n "${!name:-}" || { echo "Missing $name" >&2; exit 1; }
+          done
+          flutter build apk --release             --target-platform android-arm64             --build-name="${{ steps.version.outputs.name }}"             --build-number="${{ steps.version.outputs.code }}"             --dart-define=APP_ENV=production             --dart-define=SUPABASE_URL=https://ttvasynaxkkcwrmvlorg.supabase.co             --dart-define=SUPABASE_PUBLISHABLE_KEY="$SUPABASE_PUBLISHABLE_KEY"             --dart-define=FIREBASE_API_KEY="$FIREBASE_API_KEY"             --dart-define=FIREBASE_ANDROID_APP_ID="$FIREBASE_ANDROID_APP_ID"             --dart-define=FIREBASE_MESSAGING_SENDER_ID="$FIREBASE_MESSAGING_SENDER_ID"             --dart-define=FIREBASE_PROJECT_ID="$FIREBASE_PROJECT_ID"             --dart-define=FIREBASE_STORAGE_BUCKET="$FIREBASE_STORAGE_BUCKET"
+
+      - name: Build signed Play Store AAB
+        env: *runtime_env
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter build appbundle --release             --target-platform android-arm64             --build-name="${{ steps.version.outputs.name }}"             --build-number="${{ steps.version.outputs.code }}"             --dart-define=APP_ENV=production             --dart-define=SUPABASE_URL=https://ttvasynaxkkcwrmvlorg.supabase.co             --dart-define=SUPABASE_PUBLISHABLE_KEY="$SUPABASE_PUBLISHABLE_KEY"             --dart-define=FIREBASE_API_KEY="$FIREBASE_API_KEY"             --dart-define=FIREBASE_ANDROID_APP_ID="$FIREBASE_ANDROID_APP_ID"             --dart-define=FIREBASE_MESSAGING_SENDER_ID="$FIREBASE_MESSAGING_SENDER_ID"             --dart-define=FIREBASE_PROJECT_ID="$FIREBASE_PROJECT_ID"             --dart-define=FIREBASE_STORAGE_BUCKET="$FIREBASE_STORAGE_BUCKET"
+
+      - name: Verify signed ARM64 Android 8+ release outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk='build/app/outputs/flutter-apk/app-release.apk'
+          aab='build/app/outputs/bundle/release/app-release.aab'
+          test -s "$apk" || { echo "Missing $apk" >&2; exit 1; }
+          test -s "$aab" || { echo "Missing $aab" >&2; exit 1; }
+
+          unzip -Z1 "$apk" > build/apk-files.txt
+          grep -q '^lib/arm64-v8a/libapp\.so$' build/apk-files.txt || {
+            echo 'Release APK does not contain arm64-v8a/libapp.so.' >&2
+            exit 1
+          }
+          if grep -Eq '^lib/(armeabi-v7a|x86|x86_64)/' build/apk-files.txt; then
+            echo 'Release APK contains an unexpected non-arm64 native ABI.' >&2
+            grep -E '^lib/(armeabi-v7a|x86|x86_64)/' build/apk-files.txt >&2 || true
+            exit 1
+          fi
+
+          if command -v apkanalyzer >/dev/null 2>&1; then
+            analyzer="$(command -v apkanalyzer)"
+          else
+            sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+            analyzer="$(find "$sdk_root/cmdline-tools" -type f -name apkanalyzer 2>/dev/null | sort | tail -n1)"
+          fi
+          test -x "$analyzer" || {
+            echo 'apkanalyzer is unavailable; cannot verify packaged minSdk.' >&2
+            exit 1
+          }
+          min_sdk="$("$analyzer" manifest min-sdk "$apk" | tr -d '\r')"
+          test "$min_sdk" = "26" || {
+            echo "Expected packaged minSdk 26 (Android 8.0), got $min_sdk." >&2
+            exit 1
+          }
+
+          sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          apksigner="$(find "$sdk_root/build-tools" -type f -name apksigner 2>/dev/null | sort -V | tail -n1)"
+          test -x "$apksigner" || {
+            echo 'apksigner not found in Android SDK build-tools.' >&2
+            exit 1
+          }
+          "$apksigner" verify --verbose --print-certs "$apk" | tee build/apk-signature.txt
+          grep -q 'Verified using v2 scheme (APK Signature Scheme v2): true' build/apk-signature.txt || {
+            echo 'APK Signature Scheme v2 verification failed.' >&2
+            exit 1
+          }
+
+          {
+            echo "version=${{ steps.version.outputs.raw }}"
+            echo "applicationId=app.fadhkur"
+            echo "minSdk=26"
+            echo "targetSdk=36"
+            echo "abi=arm64-v8a"
+            echo "firebaseProject=fadhkur-2f78c"
+          } > build/release-manifest.txt
+
+          sha256sum "$apk" "$aab" | tee build/release-sha256.txt
+
+      - name: Upload Android release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: fadhkur-android-${{ steps.version.outputs.name }}-${{ steps.version.outputs.code }}
+          path: |
+            apps/mobile/build/app/outputs/flutter-apk/app-release.apk
+            apps/mobile/build/app/outputs/bundle/release/app-release.aab
+            apps/mobile/build/release-sha256.txt
+            apps/mobile/build/release-manifest.txt
+            apps/mobile/build/apk-signature.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish verified Android release
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.name }}
+          target_commitish: ${{ github.sha }}
+          name: فذكر v${{ steps.version.outputs.name }}
+          files: |
+            apps/mobile/build/app/outputs/flutter-apk/app-release.apk
+            apps/mobile/build/app/outputs/bundle/release/app-release.aab
+            apps/mobile/build/release-sha256.txt
+            apps/mobile/build/release-manifest.txt
+            apps/mobile/build/apk-signature.txt
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.name, '-') }}

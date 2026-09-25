@@ -1,0 +1,20 @@
+name: Live Provider Acceptance (Non-Blocking)
+
+on:
+  schedule:
+    # Run once daily at midnight UTC to verify external live stream feeds
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+jobs:
+  check-external-providers:
+    name: Check External Live Quran Feeds
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test Cairo Quran Stream Reachability
+        run: |
+          curl -I --connect-timeout 10 https://stream.ertu.org/quran || echo "::warning::Cairo stream transient network timeout"
+
+      - name: Test Mecca Quran Stream Reachability
+        run: |
+          curl -I --connect-timeout 10 https://stream.sba.sa/nedaa || echo "::warning::Mecca stream transient network timeout"

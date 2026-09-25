@@ -1,0 +1,245 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../core/services/audio_playback_service.dart';
+import '../../../core/services/quran_download_service.dart';
+
+/// شاشة التنزيلات — تعرض مهام [QuranDownloadManager] مباشرة:
+/// طابور، إيقاف مؤقت، استئناف، إعادة محاولة، تقدّم، إلغاء، حذف،
+/// مع استعادة المهام تلقائيًا بعد إعادة تشغيل التطبيق.
+class DownloadsScreen extends ConsumerStatefulWidget {
+  const DownloadsScreen({super.key});
+
+  @override
+  ConsumerState<DownloadsScreen> createState() => _DownloadsScreenState();
+}
+
+class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
+  @override
+  void initState() {
+    super.initState();
+    // استعادة المهام المحفوظة (تُستأنف المهام المتوقفة في الطابور).
+    quranDownloadManager.init();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('التنزيلات والاستماع دون اتصال'),
+      ),
+      body: StreamBuilder<List<DownloadJob>>(
+        stream: quranDownloadManager.jobsStream,
+        initialData: quranDownloadManager.jobs,
+        builder: (context, snapshot) {
+          final jobs = snapshot.data ?? const <DownloadJob>[];
+          if (jobs.isEmpty) {
+            return const Center(
+              child: Padding(
+                padding: EdgeInsets.all(24),
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(Icons.download_for_offline_outlined, size: 48),
+                  SizedBox(height: 12),
+                  Text('لا توجد ملفات محملة حالياً',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  SizedBox(height: 8),
+                  Text('ابدأ تنزيل سورة من شاشة القرآن للاستماع دون اتصال.',
+                      textAlign: TextAlign.center),
+                ]),
+              ),
+            );
+          }
+          return ListView.builder(
+            padding: const EdgeInsets.all(16),
+            itemCount: jobs.length,
+            itemBuilder: (ctx, i) => _JobCard(job: jobs[i]),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _JobCard extends ConsumerWidget {
+  final DownloadJob job;
+  const _JobCard({required this.job});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final audioNotifier = ref.read(audioPlaybackProvider.notifier);
+    final isCompleted = job.status == DownloadJobStatus.completed;
+    final isActive = job.status == DownloadJobStatus.downloading ||
+        job.status == DownloadJobStatus.queued;
+    final isPaused = job.status == DownloadJobStatus.paused;
+    final isFailed = job.status == DownloadJobStatus.failed;
+
+    final statusColor = isCompleted
+        ? const Color(0xFF2E9E9E)
+        : isFailed
+            ? Colors.red
+            : isPaused
+                ? const Color(0xFF5B677A)
+                : const Color(0xFFC77955);
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Expanded(
+                  child: Text(
+                    job.surahNameAr,
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: statusColor.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    isCompleted && (job.expectedSha256?.isNotEmpty ?? false)
+                        ? 'مكتمل وموثق (SHA-256)'
+                        : isCompleted && (job.actualSha256?.isNotEmpty ?? false)
+                            ? 'مكتمل • SHA-256 محسوب'
+                            : downloadJobStatusLabel(job.status),
+                    style: TextStyle(
+                      color: statusColor,
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              job.reciterNameAr,
+              style: const TextStyle(color: Color(0xFF5B677A), fontSize: 13),
+            ),
+            if (isFailed && (job.errorMessage?.isNotEmpty ?? false)) ...[
+              const SizedBox(height: 6),
+              Text(
+                job.errorMessage!,
+                style: const TextStyle(color: Colors.red, fontSize: 12),
+              ),
+            ],
+            const SizedBox(height: 12),
+            if (!isCompleted) ...[
+              LinearProgressIndicator(
+                value: job.progress,
+                backgroundColor: Colors.grey.withOpacity(0.2),
+                color: const Color(0xFF2E9E9E),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    '${job.progressPercent}% • ${job.completedAyahs}/${job.totalAyahs} آية',
+                    style: const TextStyle(color: Color(0xFF5B677A), fontSize: 12),
+                  ),
+                  Row(
+                    children: [
+                      if (isActive)
+                        IconButton(
+                          icon: const Icon(Icons.pause_circle_outline,
+                              color: Color(0xFF243B6B)),
+                          tooltip: 'إيقاف مؤقت',
+                          onPressed: () => quranDownloadManager.pause(job.id),
+                        ),
+                      if (isPaused)
+                        IconButton(
+                          icon: const Icon(Icons.play_circle_outline,
+                              color: Color(0xFF2E9E9E)),
+                          tooltip: 'استئناف',
+                          onPressed: () => quranDownloadManager.resume(job.id),
+                        ),
+                      if (isFailed)
+                        IconButton(
+                          icon: const Icon(Icons.refresh, color: Color(0xFFC77955)),
+                          tooltip: 'إعادة المحاولة',
+                          onPressed: () => quranDownloadManager.retry(job.id),
+                        ),
+                      IconButton(
+                        icon: const Icon(Icons.close, color: Colors.red),
+                        tooltip: 'إلغاء المهمة',
+                        onPressed: () => _confirm(
+                          context,
+                          'إلغاء مهمة التحميل؟',
+                          () => quranDownloadManager.cancel(job.id),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ] else ...[
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'الحجم: ${(job.downloadedBytes / 1000000).toStringAsFixed(1)} MB • تخزين محلي',
+                    style: const TextStyle(color: Color(0xFF5B677A), fontSize: 12),
+                  ),
+                  Row(
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.play_arrow,
+                            color: Color(0xFF2E9E9E), size: 28),
+                        tooltip: 'تشغيل من الملف المحلي',
+                        onPressed: (job.localPath?.isNotEmpty ?? false)
+                            ? () => audioNotifier.playOfflineTrack(
+                                  job.surahNameAr,
+                                  job.reciterNameAr,
+                                  job.localPath!,
+                                )
+                            : null,
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.delete_outline, color: Colors.red),
+                        tooltip: 'حذف من الجهاز',
+                        onPressed: () => _confirm(
+                          context,
+                          'حذف الملف المحمل من الجهاز؟',
+                          () => quranDownloadManager.delete(job.id),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _confirm(
+      BuildContext context, String message, VoidCallback onConfirm) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('تأكيد'),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('تراجع'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('تأكيد'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) onConfirm();
+  }
+}

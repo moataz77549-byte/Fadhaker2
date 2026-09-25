@@ -1,0 +1,22 @@
+{
+  "project": "fadhkur",
+  "version": "1.0.0",
+  "source": "King Fahd Glorious Quran Printing Complex (Uthmanic Hafs an Asim)",
+  "canonicalIntegrity": {
+    "totalSurahs": 114,
+    "totalAyahsStandard": 6236,
+    "mushafPagesCount": 604,
+    "quranEdition": "quran-uthmani-hafs-v1.0"
+  },
+  "canonicalFiles": [
+    {
+      "filename": "surahs.json",
+      "recordsCount": 114,
+      "sha256": "edd2fd310dbee37d06401801ff499f858d170c50fe5ba097841fb1b15731aff1",
+      "description": "Complete verified canonical index of all 114 Holy Quran Surahs"
+    }
+  ],
+  "failClosedPolicy": "If SHA-256 or record count differs, reject dataset ingestion and prevent serving altered Quranic texts.",
+  "verifiedBy": "Fadhkur Integrity Pipeline",
+  "updatedAt": "2026-09-16T20:52:00Z"
+}

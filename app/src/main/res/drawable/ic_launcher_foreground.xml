@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Recitation sound wave arc / acoustic resonance curves (Teal #2E9E9E & Copper #C77955) -->
+    <!-- Top outer recitation arc -->
+    <path
+        android:strokeColor="#2E9E9E"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:pathData="M38,36 C43,30 65,30 70,36" />
+
+    <!-- Inner recitation arc -->
+    <path
+        android:strokeColor="#C77955"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:pathData="M44,42 C48,38 60,38 64,42" />
+
+    <!-- Center acoustic audio pulses -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:pathData="M50,47 L50,44 M54,48 L54,41 M58,47 L58,44" />
+
+    <!-- Open Quran Book - Left Page (Pearl White #F8F6F1) -->
+    <path
+        android:fillColor="#F8F6F1"
+        android:pathData="M52,54 C46,51 38,51 32,54 C31,54.5 30,55.5 30,56.8 L30,73 C30,74 31,74.7 32,74.5 C38,72 46,72 52,75 Z" />
+
+    <!-- Open Quran Book - Right Page (Pure White #FFFFFF) -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M56,54 C62,51 70,51 76,54 C77,54.5 78,55.5 78,56.8 L78,73 C78,74 77,74.7 76,74.5 C70,72 62,72 56,75 Z" />
+
+    <!-- Quran Spine and Rihal Base Stand (Copper Accent #C77955) -->
+    <path
+        android:fillColor="#C77955"
+        android:pathData="M52,75 L54,73 L56,75 L54,77 Z" />
+
+    <!-- Wooden Rihal Stand Cross Base -->
+    <path
+        android:strokeColor="#C77955"
+        android:strokeWidth="3.2"
+        android:strokeLineCap="round"
+        android:pathData="M36,81 L72,81 M42,75 L66,85 M66,75 L42,85" />
+
+    <!-- Subtle bookmark ribbon (Teal #2E9E9E) -->
+    <path
+        android:strokeColor="#2E9E9E"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:pathData="M54,55 L54,79 L52,82" />
+</vector>

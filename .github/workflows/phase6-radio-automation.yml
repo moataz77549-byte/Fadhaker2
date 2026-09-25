@@ -1,0 +1,64 @@
+name: Phase 6 Radio Automation Acceptance
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/phase6-radio-automation.yml'
+      - 'services/radio-engine/**'
+      - 'supabase/migrations/2026083004*.sql'
+      - 'infrastructure/icecast/**'
+      - 'infrastructure/docker-compose.radio.yml'
+      - 'infrastructure/scripts/generate-radio-fixtures.sh'
+permissions:
+  contents: read
+concurrency:
+  group: phase6-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  real-automation-e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: services/radio-engine/package-lock.json
+      - name: Install real audio runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg liquidsoap
+          liquidsoap --version | head -n 1
+      - name: Build and test
+        working-directory: services/radio-engine
+        run: npm ci && npm test
+      - name: Create ephemeral Icecast credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_password="$(openssl rand -hex 24)"
+          relay_password="$(openssl rand -hex 24)"
+          admin_password="$(openssl rand -hex 24)"
+          echo "::add-mask::$source_password"; echo "::add-mask::$relay_password"; echo "::add-mask::$admin_password"
+          printf '%s\n' "TARTEEL_ICECAST_SOURCE_PASSWORD=$source_password" "TARTEEL_ICECAST_RELAY_PASSWORD=$relay_password" "TARTEEL_ICECAST_ADMIN_USER=admin" "TARTEEL_ICECAST_ADMIN_PASSWORD=$admin_password" "TARTEEL_ICECAST_HOSTNAME=127.0.0.1" "TARTEEL_ICECAST_PORT=8000" "TARTEEL_ICECAST_BASEDIR=/usr/share/icecast2" "TARTEEL_ICECAST_LOGDIR=/var/log/icecast2" > infrastructure/icecast/.env
+          chmod 0600 infrastructure/icecast/.env
+          printf '%s\n' "TARTEEL_ICECAST_SOURCE_PASSWORD=$source_password" "TARTEEL_ICECAST_ADMIN_USER=admin" "TARTEEL_ICECAST_ADMIN_PASSWORD=$admin_password" >> "$GITHUB_ENV"
+      - name: Start real Icecast
+        run: |
+          docker compose -f infrastructure/docker-compose.radio.yml config --quiet
+          docker compose -f infrastructure/docker-compose.radio.yml up -d --build icecast
+          timeout 60 bash -c 'until curl -fsS http://127.0.0.1:8000/status-json.xsl >/dev/null; do sleep 1; done'
+      - name: Run 30-minute automation acceptance
+        env:
+          TARTEEL_E2E_SOAK_SECONDS: '1800'
+        run: node services/radio-engine/test/phase6-automation-e2e.mjs
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase6-radio-automation-evidence
+          path: artifacts/phase6-result.json
+          retention-days: 14
+      - name: Cleanup
+        if: always()
+        run: docker compose -f infrastructure/docker-compose.radio.yml down --volumes --remove-orphans

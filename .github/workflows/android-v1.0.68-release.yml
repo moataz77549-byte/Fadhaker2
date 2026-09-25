@@ -1,0 +1,254 @@
+name: Android v1.0.68 ARM64 Release — فذكر
+
+on:
+  push:
+    branches:
+      - 'release/v1.0.68-smart-radio'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-v1.0.68-production
+  cancel-in-progress: false
+
+jobs:
+  build-release:
+    name: Validate, sign & publish Android 8+ ARM64 APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout release branch
+        uses: actions/checkout@v4
+
+      - name: Verify release source version and Android contract
+        run: |
+          set -euo pipefail
+          grep -q '^version: 1.0.68+68$' apps/mobile/pubspec.yaml
+          grep -q 'applicationId = "app.fadhkur"' apps/mobile/android/app/build.gradle.kts
+          grep -q 'minSdk = 26' apps/mobile/android/app/build.gradle.kts
+          grep -q 'targetSdk = 36' apps/mobile/android/app/build.gradle.kts
+          grep -q 'compileSdk = 36' apps/mobile/android/app/build.gradle.kts
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck admin
+        run: pnpm --dir apps/admin run typecheck
+
+      - name: Run provider and Smart Radio contract tests
+        run: |
+          set -euo pipefail
+          node --experimental-strip-types --test             supabase/functions/provider-sync/providers/quranenc_adapter_test.mjs             supabase/functions/provider-sync/providers/hadeethenc_adapter_test.mjs             supabase/functions/smart-radio-resolve/resolver_test.mjs
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Flutter 3.35.7
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.7'
+          channel: stable
+          cache: true
+
+      - name: Setup Gradle 8.13
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+
+      - name: Prepare Android Gradle wrapper
+        working-directory: apps/mobile
+        run: |
+          set -euo pipefail
+          flutter_root="$(dirname "$(dirname "$(command -v flutter)")")"
+          printf 'flutter.sdk=%s\n' "$flutter_root" > android/local.properties
+          wrapper_tmp="$(mktemp -d)"
+          printf 'rootProject.name = "wrapper-bootstrap"\n' > "$wrapper_tmp/settings.gradle"
+          (
+            cd "$wrapper_tmp"
+            gradle wrapper --gradle-version 8.13 --distribution-type bin --no-daemon
+          )
+          mkdir -p android/gradle/wrapper
+          cp "$wrapper_tmp/gradlew" android/gradlew
+          cp "$wrapper_tmp/gradlew.bat" android/gradlew.bat
+          cp "$wrapper_tmp/gradle/wrapper/gradle-wrapper.jar" android/gradle/wrapper/gradle-wrapper.jar
+          cp "$wrapper_tmp/gradle/wrapper/gradle-wrapper.properties" android/gradle/wrapper/gradle-wrapper.properties
+          chmod +x android/gradlew
+          rm -rf "$wrapper_tmp"
+          grep -q 'gradle-8.13-bin.zip' android/gradle/wrapper/gradle-wrapper.properties
+
+      - name: Prepare Firebase Android configuration
+        working-directory: apps/mobile
+        env:
+          FIREBASE_GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.FIREBASE_GOOGLE_SERVICES_JSON_BASE64 }}
+        run: |
+          set -euo pipefail
+          test -n "$FIREBASE_GOOGLE_SERVICES_JSON_BASE64" || {
+            echo 'Missing FIREBASE_GOOGLE_SERVICES_JSON_BASE64 repository secret.' >&2
+            exit 1
+          }
+          printf '%s' "$FIREBASE_GOOGLE_SERVICES_JSON_BASE64"             | base64 --decode > android/app/google-services.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          data = json.loads(Path('android/app/google-services.json').read_text())
+          project = data.get('project_info', {}).get('project_id')
+          packages = {
+              c.get('client_info', {}).get('android_client_info', {}).get('package_name')
+              for c in data.get('client', [])
+          }
+          if project != 'fadhkur-2f78c':
+              raise SystemExit(f'Firebase project mismatch: {project!r}')
+          if 'app.fadhkur' not in packages:
+              raise SystemExit('Firebase config does not contain package app.fadhkur')
+          PY
+
+      - name: Prepare Android signing material
+        working-directory: apps/mobile
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD ANDROID_STORE_PASSWORD; do
+            test -n "${!name:-}" || { echo "Missing repository secret: $name" >&2; exit 1; }
+          done
+          mkdir -p android/keystore
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/keystore/upload-keystore.jks
+          chmod 600 android/keystore/upload-keystore.jks
+          umask 077
+          cat > android/key.properties <<EOF
+          storePassword=$ANDROID_STORE_PASSWORD
+          keyPassword=$ANDROID_KEY_PASSWORD
+          keyAlias=$ANDROID_KEY_ALIAS
+          storeFile=keystore/upload-keystore.jks
+          EOF
+          test -s android/keystore/upload-keystore.jks
+          test -s android/key.properties
+
+      - name: Install Flutter dependencies
+        working-directory: apps/mobile
+        run: flutter pub get
+
+      - name: Analyze and test Flutter
+        working-directory: apps/mobile
+        run: |
+          set -euo pipefail
+          flutter analyze --no-fatal-infos
+          flutter test
+
+      - name: Build signed ARM64 production APK
+        working-directory: apps/mobile
+        env:
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+          FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
+          FIREBASE_ANDROID_APP_ID: ${{ secrets.FIREBASE_ANDROID_APP_ID }}
+          FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.FIREBASE_MESSAGING_SENDER_ID }}
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          FIREBASE_STORAGE_BUCKET: ${{ secrets.FIREBASE_STORAGE_BUCKET }}
+        run: |
+          set -euo pipefail
+          for name in SUPABASE_PUBLISHABLE_KEY FIREBASE_API_KEY FIREBASE_ANDROID_APP_ID FIREBASE_MESSAGING_SENDER_ID FIREBASE_PROJECT_ID FIREBASE_STORAGE_BUCKET; do
+            test -n "${!name:-}" || { echo "Missing repository secret: $name" >&2; exit 1; }
+          done
+          test "$FIREBASE_PROJECT_ID" = "fadhkur-2f78c" || {
+            echo "FIREBASE_PROJECT_ID must be fadhkur-2f78c" >&2
+            exit 1
+          }
+          flutter build apk --release --no-pub             --target-platform android-arm64             --build-name=1.0.68             --build-number=68             --dart-define=APP_ENV=production             --dart-define=SUPABASE_URL=https://ttvasynaxkkcwrmvlorg.supabase.co             --dart-define=SUPABASE_PUBLISHABLE_KEY="$SUPABASE_PUBLISHABLE_KEY"             --dart-define=FIREBASE_API_KEY="$FIREBASE_API_KEY"             --dart-define=FIREBASE_ANDROID_APP_ID="$FIREBASE_ANDROID_APP_ID"             --dart-define=FIREBASE_MESSAGING_SENDER_ID="$FIREBASE_MESSAGING_SENDER_ID"             --dart-define=FIREBASE_PROJECT_ID="$FIREBASE_PROJECT_ID"             --dart-define=FIREBASE_STORAGE_BUCKET="$FIREBASE_STORAGE_BUCKET"
+
+      - name: Verify ABI, Android 8+ SDK and APK signature
+        working-directory: apps/mobile
+        run: |
+          set -euo pipefail
+          apk='build/app/outputs/flutter-apk/app-release.apk'
+          test -s "$apk"
+
+          mapfile -t abis < <(
+            unzip -Z1 "$apk"               | awk -F/ '/^lib\/[^/]+\/.*\.so$/ {print $2}'               | sort -u
+          )
+          printf 'Detected native ABIs: %s\n' "${abis[*]:-none}"
+          test "${#abis[@]}" -eq 1
+          test "${abis[0]}" = 'arm64-v8a'
+          unzip -Z1 "$apk" | grep -q '^lib/arm64-v8a/libflutter\.so$'
+          unzip -Z1 "$apk" | grep -q '^lib/arm64-v8a/libapp\.so$'
+
+          build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -V | tail -1)"
+          test -n "$build_tools"
+          aapt="$ANDROID_HOME/build-tools/$build_tools/aapt"
+          apksigner="$ANDROID_HOME/build-tools/$build_tools/apksigner"
+          test -x "$aapt"
+          test -x "$apksigner"
+
+          mkdir -p build/release
+          "$aapt" dump badging "$apk" | tee build/release/apk-badging.txt
+          grep -q "package: name='app.fadhkur'" build/release/apk-badging.txt
+          grep -q "versionCode='68'" build/release/apk-badging.txt
+          grep -q "versionName='1.0.68'" build/release/apk-badging.txt
+          grep -q "sdkVersion:'26'" build/release/apk-badging.txt
+          grep -q "targetSdkVersion:'36'" build/release/apk-badging.txt
+          grep -q "native-code: 'arm64-v8a'" build/release/apk-badging.txt
+
+          "$apksigner" verify --verbose --print-certs "$apk"             | tee build/release/apk-signature.txt
+
+          cp "$apk" build/release/Fadhkur-v1.0.68-arm64-android8plus.apk
+          (
+            cd build/release
+            sha256sum Fadhkur-v1.0.68-arm64-android8plus.apk               | tee Fadhkur-v1.0.68-arm64-android8plus.apk.sha256
+          )
+
+      - name: Upload verified release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fadhkur-v1.0.68-arm64-android8plus
+          path: |
+            apps/mobile/build/release/Fadhkur-v1.0.68-arm64-android8plus.apk
+            apps/mobile/build/release/Fadhkur-v1.0.68-arm64-android8plus.apk.sha256
+            apps/mobile/build/release/apk-badging.txt
+            apps/mobile/build/release/apk-signature.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish GitHub Release v1.0.68
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.68
+          target_commitish: ${{ github.sha }}
+          name: فذكر v1.0.68 — Android 8+ ARM64
+          body: |
+            إصدار Android إنتاجي موقّع لتطبيق فذكر.
+
+            - Android 8.0+ (minSdk 26)
+            - ARM64 / arm64-v8a فقط
+            - إذاعة فذكر الذكية حسب الوقت ومواقيت الصلاة
+            - تحسين القراء والإذاعات والقنوات والمحتوى الموثق
+            - Firebase/FCM وSupabase بإعدادات الإنتاج
+            - فحص توقيع APK وABI وSDK داخل CI قبل النشر
+          files: |
+            apps/mobile/build/release/Fadhkur-v1.0.68-arm64-android8plus.apk
+            apps/mobile/build/release/Fadhkur-v1.0.68-arm64-android8plus.apk.sha256
+            apps/mobile/build/release/apk-badging.txt
+            apps/mobile/build/release/apk-signature.txt
+          generate_release_notes: true
+          draft: false
+          prerelease: false
