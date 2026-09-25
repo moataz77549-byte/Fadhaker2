@@ -27,7 +27,7 @@ void main() {
     empty.dispose();
 
     final offline = repository(MockClient((request) async {
-      throw const http.ClientException('offline');
+      throw http.ClientException('offline');
     }));
     await expectLater(offline.loadResult(), throwsA(
       isA<VideoCatalogException>().having(
@@ -43,7 +43,7 @@ void main() {
     online.dispose();
 
     final offline = repository(MockClient((request) async {
-      throw const http.ClientException('offline');
+      throw http.ClientException('offline');
     }));
     final result = await offline.loadResult();
     expect(result.channels, hasLength(1));

@@ -106,7 +106,7 @@ class _BrandMarkPainter extends CustomPainter {
     // Live Radio pulses
     if (isRadio) {
       final radioPulsePaint = Paint()
-        ..color = secondaryColor.withOpacity(0.8)
+        ..color = secondaryColor.withValues(alpha: 0.8)
         ..style = PaintingStyle.stroke
         ..strokeWidth = s * 0.025
         ..strokeCap = StrokeCap.round;

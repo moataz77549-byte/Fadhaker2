@@ -99,7 +99,7 @@ class _JobCard extends ConsumerWidget {
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
-                    color: statusColor.withOpacity(0.15),
+                    color: statusColor.withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Text(
@@ -133,7 +133,7 @@ class _JobCard extends ConsumerWidget {
             if (!isCompleted) ...[
               LinearProgressIndicator(
                 value: job.progress,
-                backgroundColor: Colors.grey.withOpacity(0.2),
+                backgroundColor: Colors.grey.withValues(alpha: 0.2),
                 color: const Color(0xFF2E9E9E),
               ),
               const SizedBox(height: 8),

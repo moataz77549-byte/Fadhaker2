@@ -60,7 +60,7 @@ class RecitationsScreen extends ConsumerWidget {
                         CircleAvatar(
                           radius: 28,
                           backgroundColor:
-                              const Color(0xFF2E9E9E).withOpacity(0.15),
+                              const Color(0xFF2E9E9E).withValues(alpha: 0.15),
                           child: const Icon(
                             Icons.person,
                             color: Color(0xFF2E9E9E),
@@ -149,7 +149,7 @@ class ReciterDetailScreen extends ConsumerWidget {
                     CircleAvatar(
                       radius: 36,
                       backgroundColor:
-                          const Color(0xFF2E9E9E).withOpacity(0.25),
+                          const Color(0xFF2E9E9E).withValues(alpha: 0.25),
                       child: const Icon(
                         Icons.person,
                         color: Colors.white,
@@ -190,7 +190,7 @@ class ReciterDetailScreen extends ConsumerWidget {
                         vertical: 6,
                       ),
                       decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.1),
+                        color: Colors.white.withValues(alpha: 0.1),
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: Text(
@@ -245,7 +245,7 @@ class ReciterDetailScreen extends ConsumerWidget {
                       child: ListTile(
                         leading: CircleAvatar(
                           backgroundColor:
-                              const Color(0xFF2E9E9E).withOpacity(0.12),
+                              const Color(0xFF2E9E9E).withValues(alpha: 0.12),
                           child: Text(
                             '${surah.number}',
                             style: const TextStyle(

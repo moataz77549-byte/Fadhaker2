@@ -56,7 +56,7 @@ void main() {
         .having((e) => e.failure, 'failure', ReciterCatalogFailure.configuration)));
     badConfig.dispose();
     final offline = service(MockClient((request) async {
-      throw const http.ClientException('offline');
+      throw http.ClientException('offline');
     }));
     await expectLater(offline.loadTracks('reciter-1'), throwsA(
       isA<ReciterCatalogException>().having(

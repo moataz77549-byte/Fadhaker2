@@ -145,21 +145,25 @@ class _QuranSettingsSheetState extends State<QuranSettingsSheet> {
                       style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.error),
                     ),
                   ),
-                ...supportedFonts.map((f) => RadioListTile<String>(
-                  title: Text(f.nameAr),
-                  subtitle: Text(
-                    [
-                      if (f.licenseNoteAr.isNotEmpty) f.licenseNoteAr,
-                      if (!f.hasDownload) 'لا يوجد ملف تحميل موثّق — يُستخدم خط النظام.',
-                    ].join('\n'),
-                    style: const TextStyle(fontSize: 11),
-                  ),
-                  value: f.id,
+                RadioGroup<String>(
                   groupValue: font.id,
                   onChanged: (v) => _update(() => widget.stateRepository.saveFontId(v ?? 'uthmanic-hafs')),
-                  dense: true,
-                  contentPadding: EdgeInsets.zero,
-                )),
+                  child: Column(
+                    children: supportedFonts.map((f) => RadioListTile<String>(
+                      title: Text(f.nameAr),
+                      subtitle: Text(
+                        [
+                          if (f.licenseNoteAr.isNotEmpty) f.licenseNoteAr,
+                          if (!f.hasDownload) 'لا يوجد ملف تحميل موثّق — يُستخدم خط النظام.',
+                        ].join('\n'),
+                        style: const TextStyle(fontSize: 11),
+                      ),
+                      value: f.id,
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                    )).toList(),
+                  ),
+                ),
                 const SizedBox(height: 8),
                 Row(
                   children: [
