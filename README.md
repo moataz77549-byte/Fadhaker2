@@ -2,7 +2,7 @@
 
 تطبيق لقراءة القرآن والاستماع للإذاعات والتلاوات، مع خدمات تنبيه محلية.
 
-**نسخة التطبيق الحالية:** `1.0.69-beta.5` (build `73`) · `minSdk 26` (Android 8+) · APK للإصدار: `arm64-v8a` · التطبيق: `apps/mobile` (Flutter) · لوحة الإدارة: `apps/admin` (Next.js)
+**نسخة التطبيق الحالية:** `1.0.69-beta.6` (build `74`) · `minSdk 26` (Android 8+) · APK للإصدار: `arm64-v8a` · التطبيق: `apps/mobile` (Flutter) · لوحة الإدارة: `apps/admin` (Next.js)
 
 ---
 
