@@ -3,6 +3,8 @@ import 'package:http/http.dart' as http;
 import '../../../core/config/supabase_config.dart';
 import '../domain/mushaf_page.dart';
 import '../domain/quran_navigation.dart';
+import '../domain/quran_search_result.dart';
+import '../domain/quran_audio.dart';
 import '../domain/riwaya.dart';
 import '../domain/tafsir_source.dart';
 import 'quran_public_text_source.dart';
@@ -121,6 +123,98 @@ class QuranApiRepository {
     } catch (_) {
       return _public.lookupPage(chapter: chapter, verse: verse);
     }
+  }
+
+  Future<List<QuranRecitation>> recitations() async {
+    final json = await _getJson(Uri.parse('$_functionsBase/quran/recitations'));
+    final raw = json['recitations'];
+    if (raw is! List) return const [];
+    return raw
+        .whereType<Map>()
+        .map((item) => QuranRecitation.fromJson(Map<String, dynamic>.from(item)))
+        .where((item) => item.id > 0 && item.nameAr.isNotEmpty)
+        .toList(growable: false);
+  }
+
+  Future<QuranAyahAudio> ayahAudio({
+    required String verseKey,
+    required int recitationId,
+  }) async {
+    QuranNavigation.parseAyahKey(verseKey);
+    final uri = Uri.parse('$_functionsBase/quran/audio/ayah').replace(
+      queryParameters: {
+        'verse_key': verseKey,
+        'recitation_id': '$recitationId',
+      },
+    );
+    final json = await _getJson(uri);
+    final audioUrl = (json['audioUrl'] ?? '').toString();
+    if (audioUrl.isEmpty) throw StateError('Ayah audio URL is empty');
+    final durationMs = (json['durationMs'] as num?)?.toInt();
+    return QuranAyahAudio(
+      verseKey: verseKey,
+      audioUrl: audioUrl,
+      duration: durationMs == null || durationMs <= 0
+          ? null
+          : Duration(milliseconds: durationMs),
+    );
+  }
+
+  Future<List<QuranAyahAudio>> audioFromAyah({
+    required String verseKey,
+    required int recitationId,
+  }) async {
+    QuranNavigation.parseAyahKey(verseKey);
+    final uri = Uri.parse('$_functionsBase/quran/audio/from-ayah').replace(
+      queryParameters: {
+        'verse_key': verseKey,
+        'recitation_id': '$recitationId',
+      },
+    );
+    final json = await _getJson(uri);
+    final raw = json['audioFiles'];
+    if (raw is! List) return const [];
+    return raw.whereType<Map>().map((item) {
+      final row = Map<String, dynamic>.from(item);
+      return QuranAyahAudio(
+        verseKey: (row['verseKey'] ?? '').toString(),
+        audioUrl: (row['audioUrl'] ?? '').toString(),
+      );
+    }).where((item) => item.verseKey.isNotEmpty && item.audioUrl.isNotEmpty)
+      .toList(growable: false);
+  }
+
+  /// بحث موحد في نص القرآن وأسماء السور والتنقلات.
+  ///
+  /// Search API يبقى خلف Edge Function لأن Quran Foundation يشترط
+  /// credentials/scope على الخادم، تمامًا مثل Content API.
+  Future<List<QuranSearchResult>> searchQuran(String query) async {
+    final normalized = query.trim();
+    if (normalized.length < 2) return const [];
+    final uri = Uri.parse('$_functionsBase/quran/search').replace(
+      queryParameters: {'q': normalized},
+    );
+    final json = await _getJson(uri);
+    final result = json['result'];
+    if (result is! Map) return const [];
+    final map = Map<String, dynamic>.from(result);
+    final combined = <QuranSearchResult>[];
+    for (final key in ['navigation', 'verses']) {
+      final raw = map[key];
+      if (raw is! List) continue;
+      for (final item in raw.whereType<Map>()) {
+        final parsed = QuranSearchResult.fromFoundation(
+          Map<String, dynamic>.from(item),
+        );
+        if (parsed.title.trim().isNotEmpty) combined.add(parsed);
+      }
+    }
+    final seen = <String>{};
+    return combined.where((item) {
+      final signature =
+          '${item.type.name}:${item.verseKey ?? item.pageNumber ?? item.title}';
+      return seen.add(signature);
+    }).toList(growable: false);
   }
 
   Future<Map<String, dynamic>> _getJson(Uri uri) async {

@@ -191,6 +191,46 @@ class FadhkurAudioHandler extends audio_service.BaseAudioHandler
     unawaited(_player.play());
   }
 
+  Future<void> loadAndPlayQueue({
+    required String title,
+    required String subtitle,
+    required List<String> logicalUris,
+  }) async {
+    final uris = logicalUris.map((e) => e.trim()).where((e) => e.isNotEmpty).toList(growable: false);
+    if (uris.isEmpty) throw ArgumentError('Audio queue must not be empty');
+
+    final session = await AudioSession.instance;
+    await session.configure(const AudioSessionConfiguration.music());
+    _isLive = false;
+    _fallbackUri = null;
+    _fallbackUsed = false;
+    _failoverInProgress = false;
+
+    mediaItem.add(
+      audio_service.MediaItem(
+        id: uris.first,
+        album: 'القرآن الكريم',
+        title: title,
+        artist: subtitle.isEmpty ? null : subtitle,
+        extras: {
+          'mode': PlaybackMode.quranAudio.name,
+          'queue_length': uris.length,
+          'is_live': false,
+        },
+      ),
+    );
+
+    await _player.setAudioSource(
+      just_audio.ConcatenatingAudioSource(
+        useLazyPreparation: true,
+        children: uris
+            .map((uri) => just_audio.AudioSource.uri(Uri.parse(uri)))
+            .toList(growable: false),
+      ),
+    );
+    unawaited(_player.play());
+  }
+
   String? _cleanFallback(String primary, String? fallback) {
     final value = fallback?.trim();
     if (value == null || value.isEmpty || value == primary.trim()) return null;
@@ -364,6 +404,33 @@ class FadhkurAudioNotifier extends StateNotifier<PlaybackState> {
       uri: audioUrl,
       fallbackDuration: duration ?? const Duration(minutes: 20),
     );
+  }
+
+  Future<void> playQuranQueue(
+    String title,
+    String reciterName,
+    List<String> audioUrls,
+  ) async {
+    final urls = audioUrls.map((e) => e.trim()).where((e) => e.isNotEmpty).toList(growable: false);
+    if (urls.isEmpty) return;
+    state = state.copyWith(
+      isPlaying: false,
+      mode: PlaybackMode.quranAudio,
+      currentTitle: title,
+      currentSubtitle: reciterName,
+      currentUri: urls.first,
+      position: Duration.zero,
+      duration: Duration.zero,
+    );
+    try {
+      await _handler.loadAndPlayQueue(
+        title: title,
+        subtitle: reciterName,
+        logicalUris: urls,
+      );
+    } catch (_) {
+      state = state.copyWith(isPlaying: false);
+    }
   }
 
   Future<void> playOfflineTrack(

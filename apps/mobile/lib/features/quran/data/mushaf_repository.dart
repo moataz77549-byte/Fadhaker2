@@ -39,6 +39,18 @@ class MushafRepository {
       },
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
+    // Page payloads are reproducible cache, not user data. Keep a bounded LRU
+    // window on disk so long-term browsing never grows storage without limit.
+    await database.rawDelete(
+      '''
+      DELETE FROM mushaf_pages
+      WHERE cache_key NOT IN (
+        SELECT cache_key FROM mushaf_pages
+        ORDER BY updated_at DESC
+        LIMIT 180
+      )
+      ''',
+    );
     return result;
   }
 
@@ -47,7 +59,7 @@ class MushafRepository {
     if (existing != null) return existing;
     final database = await openDatabase(
       p.join(await getDatabasesPath(), 'fadhkur_mushaf.db'),
-      version: 2,
+      version: 3,
       onCreate: (db, _) => db.execute(
         'CREATE TABLE mushaf_pages(cache_key TEXT PRIMARY KEY, payload TEXT NOT NULL, updated_at INTEGER NOT NULL)',
       ),
@@ -57,6 +69,11 @@ class MushafRepository {
           await db.execute(
             'CREATE TABLE mushaf_pages(cache_key TEXT PRIMARY KEY, payload TEXT NOT NULL, updated_at INTEGER NOT NULL)',
           );
+        }
+        // v3 adds QCF word/line metadata to the cached payload. This table is
+        // cache-only, so clearing it is safe and preserves bookmarks/progress.
+        if (oldVersion >= 2 && oldVersion < 3) {
+          await db.delete('mushaf_pages');
         }
       },
     );

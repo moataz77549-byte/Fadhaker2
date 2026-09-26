@@ -31,7 +31,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          node --experimental-strip-types --test             supabase/functions/provider-sync/providers/quranenc_adapter_test.mjs             supabase/functions/provider-sync/providers/hadeethenc_adapter_test.mjs             supabase/functions/smart-radio-resolve/resolver_test.mjs
+          node --experimental-strip-types --test             supabase/functions/provider-sync/providers/quranenc_adapter_test.mjs             supabase/functions/provider-sync/providers/hadeethenc_adapter_test.mjs             supabase/functions/smart-radio-resolve/resolver_test.mjs \
+            supabase/functions/quran-yutla-api/quran_mapping_test.mjs
 
   admin-nextjs:
     name: Admin Next.js (Build & Lint)

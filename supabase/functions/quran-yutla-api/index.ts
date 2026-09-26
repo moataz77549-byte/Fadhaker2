@@ -1,3 +1,4 @@
+import { parseVerseKey, resolvePageFromLookupPayload } from './quran_mapping.ts';
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0';
 
@@ -398,17 +399,20 @@ const QF_HOSTS = QF_ENV === 'prelive'
   ? { auth: 'https://prelive-oauth2.quran.foundation', api: 'https://apis-prelive.quran.foundation' }
   : { auth: 'https://oauth2.quran.foundation', api: 'https://apis.quran.foundation' };
 const QF_CONTENT_BASE = `${QF_HOSTS.api}/content/api/v4`;
+const QF_SEARCH_BASE = `${QF_HOSTS.api}/search/api/v1`;
+const QURANPEDIA_BASE = 'https://api.quranpedia.net/v1';
 const QF_USER_AGENT = 'Fadhkur/1.0 (Supabase Edge Function; +https://fadhkur.app)';
 
-let qfTokenCache: { accessToken: string; expiresAt: number } | null = null;
+const qfTokenCache = new Map<string, { accessToken: string; expiresAt: number }>();
 
-async function getQfAccessToken(): Promise<string> {
+async function getQfAccessToken(scope = 'content'): Promise<string> {
   if (!QF_CLIENT_ID || !QF_CLIENT_SECRET) {
     throw Object.assign(new Error('Quran Foundation credentials are not configured'), { code: 'QF_NOT_CONFIGURED' });
   }
   const now = Date.now();
-  if (qfTokenCache && qfTokenCache.expiresAt > now + 60_000) {
-    return qfTokenCache.accessToken;
+  const cached = qfTokenCache.get(scope);
+  if (cached && cached.expiresAt > now + 60_000) {
+    return cached.accessToken;
   }
   const basic = btoa(`${QF_CLIENT_ID}:${QF_CLIENT_SECRET}`);
   const res = await fetch(`${QF_HOSTS.auth}/oauth2/token`, {
@@ -418,7 +422,7 @@ async function getQfAccessToken(): Promise<string> {
       'Content-Type': 'application/x-www-form-urlencoded',
       'User-Agent': QF_USER_AGENT,
     },
-    body: 'grant_type=client_credentials&scope=content',
+    body: `grant_type=client_credentials&scope=${encodeURIComponent(scope)}`,
   });
   if (!res.ok) {
     throw Object.assign(new Error(`Quran Foundation token request failed (${res.status})`), { code: 'QF_TOKEN_FAILED' });
@@ -427,18 +431,47 @@ async function getQfAccessToken(): Promise<string> {
   if (!data.access_token) {
     throw Object.assign(new Error('Quran Foundation returned no access token'), { code: 'QF_TOKEN_FAILED' });
   }
-  qfTokenCache = { accessToken: data.access_token, expiresAt: now + (data.expires_in ?? 3600) * 1000 };
-  return qfTokenCache.accessToken;
+  const cachedToken = {
+    accessToken: data.access_token,
+    expiresAt: now + (data.expires_in ?? 3600) * 1000,
+  };
+  qfTokenCache.set(scope, cachedToken);
+  return cachedToken.accessToken;
 }
 
 async function qfGet(pathname: string, params: Record<string, string>): Promise<Response> {
-  const token = await getQfAccessToken();
+  const token = await getQfAccessToken('content');
   const target = new URL(QF_CONTENT_BASE + pathname);
   for (const [k, v] of Object.entries(params)) target.searchParams.set(k, v);
   return await fetch(target.toString(), {
     headers: {
       'x-auth-token': token,
       'x-client-id': QF_CLIENT_ID,
+      'Accept': 'application/json',
+      'User-Agent': QF_USER_AGENT,
+    },
+  });
+}
+
+async function qfSearch(params: Record<string, string>): Promise<Response> {
+  const token = await getQfAccessToken('search');
+  const target = new URL(`${QF_SEARCH_BASE}/search`);
+  for (const [k, v] of Object.entries(params)) target.searchParams.set(k, v);
+  return await fetch(target.toString(), {
+    headers: {
+      'x-auth-token': token,
+      'x-client-id': QF_CLIENT_ID,
+      'Accept': 'application/json',
+      'User-Agent': QF_USER_AGENT,
+    },
+  });
+}
+
+async function quranpediaGet(pathname: string, params: Record<string, string> = {}): Promise<Response> {
+  const target = new URL(QURANPEDIA_BASE + pathname);
+  for (const [k, v] of Object.entries(params)) target.searchParams.set(k, v);
+  return await fetch(target.toString(), {
+    headers: {
       'Accept': 'application/json',
       'User-Agent': QF_USER_AGENT,
     },
@@ -599,6 +632,8 @@ async function handleQuranProxy(
       }
       const params: Record<string, string> = {
         fields: 'text_uthmani,text_uthmani_tajweed',
+        words: 'true',
+        word_fields: 'verse_key,location,line_number,text_qpc_hafs,code_v2',
         language: 'ar',
       };
       if (riwaya.qfMushafId) params['mushaf'] = String(riwaya.qfMushafId);
@@ -651,7 +686,8 @@ async function handleQuranProxy(
       }
       let upstream: Response;
       try {
-        upstream = await qfGet('/pages/lookup', { chapter_number: String(chapter), verse_number: String(verse), mushaf: '1' });
+        const verseKey = `${chapter}:${verse}`;
+        upstream = await qfGet('/pages/lookup', { from: verseKey, to: verseKey, mushaf: '1' });
       } catch (error) {
         if ((error as { code?: string })?.code === 'QF_NOT_CONFIGURED') {
           return await fetchHafsLookupFallback(chapter, verse, requestId);
@@ -661,13 +697,188 @@ async function handleQuranProxy(
       if (!upstream.ok) {
         return errorResponse('UPSTREAM_ERROR', `Quran Foundation error (${upstream.status})`, 502, requestId);
       }
-      const body = await upstream.json() as Record<string, unknown>;
-      const lookup = (body['lookup'] as Record<string, unknown> | undefined) ?? body;
-      const page = Number(lookup['page_number'] ?? lookup['page'] ?? NaN);
-      if (!Number.isInteger(page) || page < 1 || page > 604) {
+      const body = await upstream.json() as { pages?: Record<string, unknown> };
+      const pageKey = resolvePageFromLookupPayload(body);
+      if (!pageKey) {
         return errorResponse('LOOKUP_FAILED', 'Could not resolve the page for this ayah', 502, requestId);
       }
-      return jsonResponse({ chapter, verse, page }, 200, requestId);
+      return jsonResponse({ chapter, verse, page: pageKey }, 200, requestId);
+    }
+
+    // 4) GET /quran/search?q=... — بحث نص القرآن/السور/الصفحات عبر Search API.
+    if (sub === 'search') {
+      const query = (url.searchParams.get('q') ?? '').trim();
+      if (query.length < 2 || query.length > 160) {
+        return errorResponse('INVALID_QUERY', 'Search query must be between 2 and 160 characters', 400, requestId);
+      }
+      const upstream = await qfSearch({
+        mode: 'quick',
+        query,
+        get_text: '1',
+        navigationalResultsNumber: '10',
+        versesResultsNumber: '30',
+      });
+      if (!upstream.ok) {
+        return errorResponse('UPSTREAM_SEARCH_ERROR', `Quran Foundation search error (${upstream.status})`, 502, requestId);
+      }
+      return jsonResponse(await upstream.json(), 200, requestId);
+    }
+
+    // 5) GET /quran/topics — فهرس موضوعات Quranpedia مع الآيات المرتبطة.
+    if (sub === 'topics') {
+      const cached = cacheGet<unknown>('quranpedia:topics', 6 * 3600_000);
+      if (cached) return jsonResponse({ topics: cached, source: 'quranpedia' }, 200, requestId);
+      const upstream = await quranpediaGet('/topics');
+      if (!upstream.ok) {
+        return errorResponse('TOPICS_UPSTREAM_ERROR', `Quranpedia error (${upstream.status})`, 502, requestId);
+      }
+      const topics = await upstream.json();
+      cacheSet('quranpedia:topics', topics);
+      return jsonResponse({
+        topics,
+        source: 'quranpedia',
+        sourceName: 'Quranpedia — الموسوعة القرآنية',
+        sourceVersion: 'live-api-v1',
+        license: 'https://quranpedia.net/api-docs#usage-policy',
+        attribution: 'Quranpedia.net',
+      }, 200, requestId);
+    }
+
+    // 6) GET /quran/topics/changes?since=YYYY-MM-DD — delta check فقط.
+    if (sub === 'topics/changes') {
+      const since = (url.searchParams.get('since') ?? '').trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(since)) {
+        return errorResponse('INVALID_SINCE', 'since must be YYYY-MM-DD', 400, requestId);
+      }
+      const upstream = await quranpediaGet('/changes', { since });
+      if (!upstream.ok) {
+        return errorResponse('TOPICS_UPSTREAM_ERROR', `Quranpedia changes error (${upstream.status})`, 502, requestId);
+      }
+      const payload = await upstream.json() as Record<string, unknown>;
+      const topics = payload['topics'] as Record<string, unknown> | undefined;
+      const count = Number(topics?.['count'] ?? 0);
+      return jsonResponse({ changed: Number.isFinite(count) && count > 0, count }, 200, requestId);
+    }
+
+    // 7) GET /quran/topics/search?q=... — بحث مباشر في الموضوعات عند الحاجة.
+    if (sub === 'topics/search') {
+      const query = (url.searchParams.get('q') ?? '').trim();
+      if (query.length < 2 || query.length > 120) {
+        return errorResponse('INVALID_QUERY', 'Topic search query must be between 2 and 120 characters', 400, requestId);
+      }
+      const upstream = await quranpediaGet(`/search/${encodeURIComponent(query)}/topics`);
+      if (!upstream.ok) {
+        return errorResponse('TOPICS_UPSTREAM_ERROR', `Quranpedia search error (${upstream.status})`, 502, requestId);
+      }
+      const payload = await upstream.json() as unknown;
+      if (Array.isArray(payload)) {
+        return jsonResponse({ topics: payload }, 200, requestId);
+      }
+      const object = payload as Record<string, unknown>;
+      const items = (object['items'] as unknown[]) ?? [];
+      const normalized = items.map((item) => {
+        if (!item || typeof item !== 'object') return item;
+        const row = item as Record<string, unknown>;
+        return (row['topic_info'] as Record<string, unknown> | undefined) ?? row;
+      });
+      return jsonResponse({ topics: normalized }, 200, requestId);
+    }
+
+    // Audio resources are Content API data and must remain behind this backend.
+    if (sub === 'recitations') {
+      const cached = cacheGet<unknown>('quran:recitations:ar', 6 * 3600_000);
+      if (cached) return jsonResponse({ recitations: cached }, 200, requestId);
+      const upstream = await qfGet('/resources/recitations', { language: 'ar' });
+      if (!upstream.ok) {
+        return errorResponse('UPSTREAM_AUDIO_ERROR', `Quran Foundation recitations error (${upstream.status})`, 502, requestId);
+      }
+      const body = await upstream.json() as { recitations?: Array<Record<string, unknown>> };
+      const recitations = (body.recitations ?? []).map((row) => ({
+        id: Number(row.id),
+        nameAr: String(row.reciter_name ?? row.name ?? ''),
+        style: row.style == null ? null : String(row.style),
+      })).filter((row) => Number.isInteger(row.id) && row.id > 0 && row.nameAr.length > 0);
+      cacheSet('quran:recitations:ar', recitations);
+      return jsonResponse({ recitations }, 200, requestId);
+    }
+
+    if (sub === 'audio/ayah') {
+      const verseKey = (url.searchParams.get('verse_key') ?? '').trim();
+      const parsed = parseVerseKey(verseKey);
+      const recitationId = parseInt(url.searchParams.get('recitation_id') ?? '', 10);
+      if (!parsed || !Number.isInteger(recitationId) || recitationId < 1) {
+        return errorResponse('INVALID_AUDIO_REQUEST', 'Valid verse_key and recitation_id are required', 400, requestId);
+      }
+      const upstream = await qfGet(
+        `/recitations/${recitationId}/by_ayah/${encodeURIComponent(verseKey)}`,
+        { fields: 'verse_key,url,format,duration,id', per_page: '1' },
+      );
+      if (!upstream.ok) {
+        return errorResponse('UPSTREAM_AUDIO_ERROR', `Quran Foundation ayah audio error (${upstream.status})`, 502, requestId);
+      }
+      const body = await upstream.json() as { audio_files?: Array<Record<string, unknown>> };
+      const row = body.audio_files?.find((item) => String(item.verse_key ?? '') === verseKey) ?? body.audio_files?.[0];
+      if (!row) return errorResponse('AUDIO_NOT_FOUND', 'No ayah audio file was returned', 404, requestId);
+      const rawUrl = String(row.url ?? '');
+      if (!rawUrl) return errorResponse('AUDIO_NOT_FOUND', 'Ayah audio URL is empty', 404, requestId);
+      const audioUrl = /^https?:\/\//i.test(rawUrl)
+        ? rawUrl
+        : `https://verses.quran.foundation/${rawUrl.replace(/^\/+/, '')}`;
+      return jsonResponse({
+        verseKey,
+        recitationId,
+        audioUrl,
+        durationMs: Number(row.duration ?? 0) || null,
+      }, 200, requestId);
+    }
+
+    if (sub === 'audio/from-ayah') {
+      const verseKey = (url.searchParams.get('verse_key') ?? '').trim();
+      const parsed = parseVerseKey(verseKey);
+      const recitationId = parseInt(url.searchParams.get('recitation_id') ?? '', 10);
+      if (!parsed || !Number.isInteger(recitationId) || recitationId < 1) {
+        return errorResponse('INVALID_AUDIO_REQUEST', 'Valid verse_key and recitation_id are required', 400, requestId);
+      }
+      const collected: Array<{ verseKey: string; audioUrl: string }> = [];
+      let page = 1;
+      let nextPage: number | null = 1;
+      while (nextPage != null && page <= 10) {
+        const upstream = await qfGet(
+          `/recitations/${recitationId}/by_chapter/${parsed.chapter}`,
+          {
+            page: String(page),
+            per_page: '50',
+            fields: 'verse_key,url',
+          },
+        );
+        if (!upstream.ok) {
+          return errorResponse('UPSTREAM_AUDIO_ERROR', `Quran Foundation chapter ayah audio error (${upstream.status})`, 502, requestId);
+        }
+        const body = await upstream.json() as {
+          audio_files?: Array<Record<string, unknown>>;
+          pagination?: { next_page?: number | null };
+        };
+        for (const row of body.audio_files ?? []) {
+          const key = String(row.verse_key ?? '');
+          const keyParsed = parseVerseKey(key);
+          if (!keyParsed || keyParsed.chapter !== parsed.chapter || keyParsed.verse < parsed.verse) continue;
+          const rawUrl = String(row.url ?? '');
+          if (!rawUrl) continue;
+          collected.push({
+            verseKey: key,
+            audioUrl: /^https?:\/\//i.test(rawUrl)
+              ? rawUrl
+              : `https://verses.quran.foundation/${rawUrl.replace(/^\/+/, '')}`,
+          });
+        }
+        nextPage = body.pagination?.next_page ?? null;
+        if (nextPage == null) break;
+        page = nextPage;
+      }
+      if (collected.length === 0) {
+        return errorResponse('AUDIO_NOT_FOUND', 'No audio files were returned from the requested ayah', 404, requestId);
+      }
+      return jsonResponse({ verseKey, recitationId, audioFiles: collected }, 200, requestId);
     }
 
     // 4) GET /quran/tafsirs — فهرس التفاسير
