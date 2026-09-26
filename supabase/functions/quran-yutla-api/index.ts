@@ -1,3 +1,4 @@
+import { resolvePageFromLookupPayload } from './quran_mapping.ts';
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0';
 
@@ -697,9 +698,7 @@ async function handleQuranProxy(
         return errorResponse('UPSTREAM_ERROR', `Quran Foundation error (${upstream.status})`, 502, requestId);
       }
       const body = await upstream.json() as { pages?: Record<string, unknown> };
-      const pageKey = Object.keys(body.pages ?? {})
-        .map(Number)
-        .find((value) => Number.isInteger(value) && value >= 1 && value <= 604);
+      const pageKey = resolvePageFromLookupPayload(body);
       if (!pageKey) {
         return errorResponse('LOOKUP_FAILED', 'Could not resolve the page for this ayah', 502, requestId);
       }
