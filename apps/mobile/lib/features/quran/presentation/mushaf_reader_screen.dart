@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -10,15 +12,19 @@ import '../data/quran_api_repository.dart';
 import '../data/quran_config_repository.dart';
 import '../data/quran_font_loader.dart';
 import '../data/quran_reading_state_repository.dart';
+import '../data/quran_topic_repository.dart';
 import '../data/tafsir_cache_repository.dart';
 import '../domain/mushaf_edition.dart';
 import '../domain/mushaf_page.dart';
 import '../domain/quran_font.dart';
 import '../domain/quran_navigation.dart';
+import '../domain/quran_location.dart';
 import '../domain/riwaya.dart';
 import '../domain/tafsir_source.dart';
 import '../../../core/widgets/skeleton.dart';
+import 'quran_search_sheet.dart';
 import 'quran_settings_sheet.dart';
+import 'quran_unified_page_view.dart';
 import 'quran_translation_sheet.dart';
 
 /// شاشة المصحف: وضع مصوّر (صور الصفحات) ووضع نص.
@@ -50,14 +56,15 @@ class _MushafReaderScreenState extends State<MushafReaderScreen> {
   final _stateRepo = QuranReadingStateRepository();
   final _progressRepo = ReadingProgressRepository();
   final _bookmarkRepo = MushafBookmarkRepository();
+  final _topicRepo = QuranTopicRepository();
 
   late Future<_ReaderInit> _initFuture;
   PageController? _controller;
   final Map<int, Future<MushafPage>> _textPages = {};
 
   int _currentPage = 1;
+  String? _currentVerseKey;
   bool _dark = false;
-  bool _tajweed = false;
 
   @override
   void initState() {
@@ -89,18 +96,13 @@ class _MushafReaderScreenState extends State<MushafReaderScreen> {
       edition = match.isNotEmpty ? match.first : riwayaEditions.first;
       if (!edition.supportsPages) edition = null;
     }
-    var mode = await _stateRepo.readingMode();
-    // إن لم يدعم إصدار المصحف الصور، ابدأ بوضع النص.
-    if (mode == QuranReadingMode.image && edition == null) {
-      mode = QuranReadingMode.text;
-    }
-    var savedPage = await _stateRepo.lastPage(riwaya.id);
+    final mode = await _stateRepo.readingMode();
+    final savedLocation = await _stateRepo.lastLocation(riwaya.id);
+    final savedPage = savedLocation?.pageNumber ?? await _stateRepo.lastPage(riwaya.id);
     var page = savedPage ?? widget.initialPage;
-    final maxPage = mode == QuranReadingMode.image
-        ? (edition?.totalPages ?? QuranNavigation.quranFoundationTextPages)
-        : QuranNavigation.quranFoundationTextPages;
-    page = page.clamp(1, maxPage);
+    page = page.clamp(1, QuranNavigation.quranFoundationTextPages);
     _currentPage = page;
+    _currentVerseKey = savedLocation?.verseKey;
     _controller = PageController(initialPage: QuranNavigation.pageToIndex(page));
     return _ReaderInit(
       config: config,
@@ -119,6 +121,7 @@ class _MushafReaderScreenState extends State<MushafReaderScreen> {
     _configRepo.dispose();
     _apiRepo.dispose();
     _mushafRepo.dispose();
+    unawaited(_topicRepo.dispose());
     super.dispose();
   }
 
@@ -137,44 +140,53 @@ class _MushafReaderScreenState extends State<MushafReaderScreen> {
 
   void _onPageChanged(_ReaderInit init, int index) {
     final page = QuranNavigation.indexToPage(index);
-    setState(() => _currentPage = page);
-    _persistProgress(init, page);
+    setState(() {
+      _currentPage = page;
+      _currentVerseKey = null;
+    });
+    unawaited(_persistProgress(init, page));
   }
 
   Future<void> _persistProgress(_ReaderInit init, int page) async {
     try {
-      await _stateRepo.saveLastPage(init.riwaya.id, page);
-      String? surahName;
-      int? surahNumber;
-      String? ayahKey;
-      if (init.mode == QuranReadingMode.text) {
-        try {
-          final pageData = await _loadTextPage(init, page);
-          surahName = pageData.surahName;
-          if (pageData.ayahs.isNotEmpty) {
-            final first = pageData.ayahs.first;
-            surahNumber = first.chapterId;
-            ayahKey = first.key.isNotEmpty ? first.key : null;
+      final pageData = await _loadTextPage(init, page);
+      MushafAyah? current;
+      final wanted = _currentVerseKey;
+      if (wanted != null) {
+        for (final ayah in pageData.ayahs) {
+          if (ayah.key == wanted) {
+            current = ayah;
+            break;
           }
-        } catch (_) {/* best-effort */}
+        }
+      }
+      current ??= pageData.ayahs.isEmpty ? null : pageData.ayahs.first;
+      if (current != null) {
+        final location = QuranLocation(
+          pageNumber: page,
+          surahNumber: current.chapterId,
+          ayahNumber: current.number,
+          verseKey: current.key,
+        );
+        await _stateRepo.saveLastLocation(init.riwaya.id, location);
+      } else {
+        await _stateRepo.saveLastPage(init.riwaya.id, page);
       }
       await _progressRepo.save(
         page: page,
-        surahName: surahName,
-        surahNumber: surahNumber,
-        ayahKey: ayahKey,
+        surahName: pageData.surahName,
+        surahNumber: current?.chapterId,
+        ayahKey: current?.key,
         riwayaId: init.riwaya.id,
       );
     } catch (_) {
-      // تجاهل هادئ: لا نعطّل القراءة بسبب فشل الحفظ.
+      // القراءة لا تتعطل بسبب فشل حفظ الموضع.
+      await _stateRepo.saveLastPage(init.riwaya.id, page);
     }
   }
 
   Future<void> _jumpToPage(_ReaderInit init, int page) async {
-    final max = init.mode == QuranReadingMode.image
-        ? (init.edition?.totalPages ?? QuranNavigation.quranFoundationTextPages)
-        : QuranNavigation.quranFoundationTextPages;
-    final target = page.clamp(1, max);
+    final target = page.clamp(1, QuranNavigation.quranFoundationTextPages);
     await _controller?.animateToPage(
       QuranNavigation.pageToIndex(target),
       duration: const Duration(milliseconds: 300),
@@ -206,61 +218,42 @@ class _MushafReaderScreenState extends State<MushafReaderScreen> {
   }
 
   Future<void> _openGotoAyah(_ReaderInit init) async {
-    final surahCtrl = TextEditingController();
-    final ayahCtrl = TextEditingController();
-    final result = await showDialog<({int chapter, int verse})>(
+    final selection = await showModalBottomSheet<QuranSearchSelection>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('الانتقال إلى آية'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: surahCtrl,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'رقم السورة (1-114)'),
-            ),
-            TextField(
-              controller: ayahCtrl,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'رقم الآية'),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('إلغاء')),
-          FilledButton(
-            onPressed: () {
-              try {
-                final chapter = int.parse(surahCtrl.text.trim());
-                final verse = int.parse(ayahCtrl.text.trim());
-                final parsed = QuranNavigation.parseAyahKey('$chapter:$verse');
-                Navigator.pop(context, parsed);
-              } catch (_) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('تحقق من رقمي السورة والآية')),
-                );
-              }
-            },
-            child: const Text('انتقال'),
-          ),
-        ],
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) => QuranSearchSheet(
+        api: _apiRepo,
+        topicRepository: _topicRepo,
       ),
     );
-    if (result == null || !mounted) return;
+    if (selection == null || !mounted) return;
     try {
-      final page = await _apiRepo.lookupPage(chapter: result.chapter, verse: result.verse);
+      var page = selection.pageNumber;
+      final key = selection.verseKey;
+      if (page == null && key != null) {
+        final parsed = QuranNavigation.parseAyahKey(key);
+        page = await _apiRepo.lookupPage(
+          chapter: parsed.chapter,
+          verse: parsed.verse,
+        );
+      }
+      if (page == null) return;
+      setState(() => _currentVerseKey = key);
       await _jumpToPage(init, page);
+      await _persistProgress(init, page);
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تعذّر تحديد صفحة الآية')),
+          const SnackBar(content: Text('تعذّر تحديد موضع نتيجة البحث')),
         );
       }
     }
   }
 
   Future<void> _showAyahActions(_ReaderInit init, MushafAyah ayah) async {
+    setState(() => _currentVerseKey = ayah.key);
+    unawaited(_persistProgress(init, _currentPage));
     final label = '﴿${ayah.text}﴾ [${ayah.key}]';
     await showModalBottomSheet<void>(
       context: context,
