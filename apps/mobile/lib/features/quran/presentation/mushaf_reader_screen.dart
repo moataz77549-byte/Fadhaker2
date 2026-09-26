@@ -52,7 +52,8 @@ class MushafReaderScreen extends ConsumerStatefulWidget {
   ConsumerState<MushafReaderScreen> createState() => _MushafReaderScreenState();
 }
 
-class _MushafReaderScreenState extends ConsumerState<MushafReaderScreen> {
+class _MushafReaderScreenState extends ConsumerState<MushafReaderScreen>
+    with WidgetsBindingObserver {
   final _configRepo = QuranConfigRepository();
   final _apiRepo = QuranApiRepository();
   final _mushafRepo = MushafRepository();
@@ -75,6 +76,7 @@ class _MushafReaderScreenState extends ConsumerState<MushafReaderScreen> {
   PageController? _controller;
   final Map<int, Future<MushafPage>> _textPages = {};
   List<QuranRecitation>? _recitations;
+  _ReaderInit? _activeInit;
 
   int _currentPage = 1;
   String? _currentVerseKey;
@@ -83,7 +85,20 @@ class _MushafReaderScreenState extends ConsumerState<MushafReaderScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _initFuture = _init();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      final init = _activeInit;
+      if (init != null) {
+        unawaited(_persistProgress(init, _currentPage));
+      }
+    }
   }
 
   Future<_ReaderInit> _init() async {
@@ -118,7 +133,7 @@ class _MushafReaderScreenState extends ConsumerState<MushafReaderScreen> {
     _currentPage = page;
     _currentVerseKey = savedLocation?.verseKey;
     _controller = PageController(initialPage: QuranNavigation.pageToIndex(page));
-    return _ReaderInit(
+    final result = _ReaderInit(
       config: config,
       riwaya: riwaya,
       edition: edition,
@@ -127,10 +142,17 @@ class _MushafReaderScreenState extends ConsumerState<MushafReaderScreen> {
       fontSize: fontSize,
       mode: mode,
     );
+    _activeInit = result;
+    return result;
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    final init = _activeInit;
+    if (init != null) {
+      unawaited(_persistProgress(init, _currentPage));
+    }
     _controller?.dispose();
     _configRepo.dispose();
     _apiRepo.dispose();
