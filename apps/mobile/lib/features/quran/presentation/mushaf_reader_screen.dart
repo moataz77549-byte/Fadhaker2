@@ -58,6 +58,16 @@ class _MushafReaderScreenState extends State<MushafReaderScreen> {
   final _bookmarkRepo = MushafBookmarkRepository();
   final _topicRepo = QuranTopicRepository();
 
+  // مسارات رجوع مؤقتة خلال فترة التحقق. لا تُفعّل في الإنتاج افتراضيًا.
+  static const _legacyImageRenderer = bool.fromEnvironment(
+    'QURAN_LEGACY_IMAGE_RENDERER',
+    defaultValue: false,
+  );
+  static const _legacyTextRenderer = bool.fromEnvironment(
+    'QURAN_LEGACY_TEXT_RENDERER',
+    defaultValue: false,
+  );
+
   late Future<_ReaderInit> _initFuture;
   PageController? _controller;
   final Map<int, Future<MushafPage>> _textPages = {};
@@ -402,9 +412,7 @@ class _MushafReaderScreenState extends State<MushafReaderScreen> {
           );
         }
         final palette = _dark ? const _ReaderPalette.dark() : const _ReaderPalette.sepia();
-        final maxPage = init.mode == QuranReadingMode.image
-            ? (init.edition?.totalPages ?? QuranNavigation.quranFoundationTextPages)
-            : QuranNavigation.quranFoundationTextPages;
+        const maxPage = QuranNavigation.quranFoundationTextPages;
         return Theme(
           data: Theme.of(context).copyWith(scaffoldBackgroundColor: palette.canvas),
           child: Scaffold(
@@ -413,40 +421,63 @@ class _MushafReaderScreenState extends State<MushafReaderScreen> {
                 _ReaderHeader(
                   page: _currentPage,
                   riwayaName: init.riwaya.nameAr,
-                  pageFuture: init.mode == QuranReadingMode.text ? _loadTextPage(init, _currentPage) : null,
+                  pageFuture: _loadTextPage(init, _currentPage),
                   palette: palette,
                   onRiwayaPressed: () => _openSettings(init),
                 ),
                 Expanded(
-                  child: init.mode == QuranReadingMode.image
+                  child: _legacyImageRenderer &&
+                          init.mode == QuranReadingMode.madani &&
+                          init.edition != null
                       ? _ImagePageView(
-                          key: ValueKey('image-${init.riwaya.id}-${init.edition?.id}'),
+                          key: ValueKey('legacy-image-${init.riwaya.id}-${init.edition?.id}'),
                           controller: _controller!,
                           edition: init.edition,
                           riwayaName: init.riwaya.nameAr,
                           palette: palette,
                           onPageChanged: (i) => _onPageChanged(init, i),
                         )
-                      : _TextPageView(
-                          key: ValueKey('text-${init.riwaya.id}'),
-                          controller: _controller!,
-                          init: init,
-                          palette: palette,
-                          tajweed: _tajweed,
-                          loadPage: (p) => _loadTextPage(init, p),
-                          onPageChanged: (i) => _onPageChanged(init, i),
-                          onRetry: _retryTextPage,
-                          onAyahPressed: (a) => _showAyahActions(init, a),
-                        ),
+                      : _legacyTextRenderer
+                          ? _TextPageView(
+                              key: ValueKey('legacy-text-${init.riwaya.id}'),
+                              controller: _controller!,
+                              init: init,
+                              palette: palette,
+                              tajweed: init.mode == QuranReadingMode.tajweed,
+                              loadPage: (p) => _loadTextPage(init, p),
+                              onPageChanged: (i) => _onPageChanged(init, i),
+                              onRetry: _retryTextPage,
+                              onAyahPressed: (a) => _showAyahActions(init, a),
+                            )
+                          : QuranUnifiedPageView(
+                              key: ValueKey(
+                                'unified-${init.riwaya.id}-${init.mode.name}',
+                              ),
+                              controller: _controller!,
+                              mode: init.mode,
+                              dark: _dark,
+                              pageColor: palette.page,
+                              inkColor: palette.ink,
+                              goldColor: palette.gold,
+                              mutedColor: palette.muted,
+                              fontFamily: init.loadedFontFamily,
+                              fontSize: init.fontSize,
+                              lineHeight: init.font.lineHeight,
+                              loadPage: (p) => _loadTextPage(init, p),
+                              onPageChanged: (i) => _onPageChanged(init, i),
+                              onRetry: _retryTextPage,
+                              onAyahPressed: (a) => _showAyahActions(init, a),
+                              topicRepository: _topicRepo,
+                            ),
                 ),
                 _ReaderControls(
                   page: _currentPage,
                   maxPage: maxPage,
                   mode: init.mode,
                   dark: _dark,
-                  tajweed: _tajweed,
                   onPageChanged: (p) => _jumpToPage(init, p),
                   onModeChanged: (m) async {
+                    await _persistProgress(init, _currentPage);
                     await _stateRepo.saveReadingMode(m);
                     if (mounted) {
                       setState(() {
@@ -458,7 +489,6 @@ class _MushafReaderScreenState extends State<MushafReaderScreen> {
                     }
                   },
                   onDarkChanged: () => setState(() => _dark = !_dark),
-                  onTajweedChanged: () => setState(() => _tajweed = !_tajweed),
                   onSettingsPressed: () => _openSettings(init),
                   onGotoPressed: () => _openGotoAyah(init),
                   onBookmarksPressed: () => _openBookmarks(init),
@@ -794,11 +824,9 @@ class _ReaderControls extends StatelessWidget {
     required this.maxPage,
     required this.mode,
     required this.dark,
-    required this.tajweed,
     required this.onPageChanged,
     required this.onModeChanged,
     required this.onDarkChanged,
-    required this.onTajweedChanged,
     required this.onSettingsPressed,
     required this.onGotoPressed,
     required this.onBookmarksPressed,
@@ -808,11 +836,9 @@ class _ReaderControls extends StatelessWidget {
   final int maxPage;
   final QuranReadingMode mode;
   final bool dark;
-  final bool tajweed;
   final ValueChanged<int> onPageChanged;
   final ValueChanged<QuranReadingMode> onModeChanged;
   final VoidCallback onDarkChanged;
-  final VoidCallback onTajweedChanged;
   final VoidCallback onSettingsPressed;
   final VoidCallback onGotoPressed;
   final VoidCallback onBookmarksPressed;
@@ -832,47 +858,71 @@ class _ReaderControls extends StatelessWidget {
             label: '$page',
             onChanged: (value) => onPageChanged(value.round()),
           ),
-          Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
-            IconButton(
-              tooltip: 'الوضع الليلي',
-              onPressed: onDarkChanged,
-              icon: Icon(dark ? Icons.light_mode : Icons.dark_mode),
-            ),
-            IconButton(
-              tooltip: 'الفواصل',
-              onPressed: onBookmarksPressed,
-              icon: const Icon(Icons.bookmarks_outlined),
-            ),
-            IconButton(
-              tooltip: 'الانتقال إلى آية',
-              onPressed: onGotoPressed,
-              icon: const Icon(Icons.search),
-            ),
-            SegmentedButton<QuranReadingMode>(
-              segments: const [
-                ButtonSegment(value: QuranReadingMode.image, icon: Icon(Icons.image_outlined), label: Text('مصوّر')),
-                ButtonSegment(value: QuranReadingMode.text, icon: Icon(Icons.text_fields), label: Text('نص')),
-              ],
-              selected: {mode},
-              onSelectionChanged: (value) => onModeChanged(value.first),
-              showSelectedIcon: false,
-            ),
-            if (mode == QuranReadingMode.text)
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
               IconButton(
-                tooltip: 'التجويد',
-                onPressed: onTajweedChanged,
-                icon: Icon(Icons.palette_outlined, color: tajweed ? Theme.of(context).colorScheme.primary : null),
+                tooltip: 'الوضع الليلي',
+                onPressed: onDarkChanged,
+                icon: Icon(dark ? Icons.light_mode : Icons.dark_mode),
               ),
-            IconButton(
-              tooltip: 'الإعدادات',
-              onPressed: onSettingsPressed,
-              icon: const Icon(Icons.settings_outlined),
-            ),
-          ]),
+              IconButton(
+                tooltip: 'الفواصل',
+                onPressed: onBookmarksPressed,
+                icon: const Icon(Icons.bookmarks_outlined),
+              ),
+              IconButton(
+                tooltip: 'البحث والتنقل',
+                onPressed: onGotoPressed,
+                icon: const Icon(Icons.search),
+              ),
+              PopupMenuButton<QuranReadingMode>(
+                tooltip: 'نوع عرض المصحف',
+                initialValue: mode,
+                onSelected: onModeChanged,
+                itemBuilder: (context) => [
+                  for (final value in QuranReadingMode.values)
+                    PopupMenuItem(
+                      value: value,
+                      child: Row(
+                        children: [
+                          Icon(_modeIcon(value), size: 19),
+                          const SizedBox(width: 10),
+                          Text(_modeLabel(value)),
+                        ],
+                      ),
+                    ),
+                ],
+                child: Chip(
+                  avatar: Icon(_modeIcon(mode), size: 17),
+                  label: Text(_modeLabel(mode)),
+                ),
+              ),
+              IconButton(
+                tooltip: 'الإعدادات',
+                onPressed: onSettingsPressed,
+                icon: const Icon(Icons.settings_outlined),
+              ),
+            ],
+          ),
         ]),
       ),
     );
   }
+
+  static String _modeLabel(QuranReadingMode mode) => switch (mode) {
+        QuranReadingMode.madani => 'المدينة',
+        QuranReadingMode.tajweed => 'التجويد',
+        QuranReadingMode.thematic => 'موضوعي',
+        QuranReadingMode.text => 'نص',
+      };
+
+  static IconData _modeIcon(QuranReadingMode mode) => switch (mode) {
+        QuranReadingMode.madani => Icons.menu_book_rounded,
+        QuranReadingMode.tajweed => Icons.palette_outlined,
+        QuranReadingMode.thematic => Icons.layers_outlined,
+        QuranReadingMode.text => Icons.text_fields,
+      };
 }
 
 /// ورقة التفسير: اختيار المصدر ثم عرض النص من الـ Backend.
