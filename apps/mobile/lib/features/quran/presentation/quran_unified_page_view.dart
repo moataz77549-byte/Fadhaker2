@@ -238,26 +238,31 @@ class _MadaniLayout extends StatelessWidget {
         for (final lineNumber in numbers)
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 1),
-            child: Wrap(
-              alignment: WrapAlignment.center,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              spacing: 3,
-              runSpacing: 0,
-              children: [
-                for (final word in lines[lineNumber]!)
-                  InkWell(
-                    borderRadius: BorderRadius.circular(4),
-                    onTap: () {
-                      final ayah = ayahByKey[word.verseKey];
-                      if (ayah != null) onAyahPressed(ayah);
-                    },
-                    child: Text(
-                      word.textQpcHafs,
-                      textDirection: TextDirection.rtl,
-                      style: style.copyWith(height: 1.75),
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.center,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                textDirection: TextDirection.rtl,
+                children: [
+                  for (final word in lines[lineNumber]!)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 1.5),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(4),
+                        onTap: () {
+                          final ayah = ayahByKey[word.verseKey];
+                          if (ayah != null) onAyahPressed(ayah);
+                        },
+                        child: Text(
+                          word.textQpcHafs,
+                          textDirection: TextDirection.rtl,
+                          style: style.copyWith(height: 1.75),
+                        ),
+                      ),
                     ),
-                  ),
-              ],
+                ],
+              ),
             ),
           ),
       ],
