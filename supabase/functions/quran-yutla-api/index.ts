@@ -1,4 +1,4 @@
-import { resolvePageFromLookupPayload } from './quran_mapping.ts';
+import { parseVerseKey, resolvePageFromLookupPayload } from './quran_mapping.ts';
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0';
 
@@ -782,6 +782,103 @@ async function handleQuranProxy(
         return (row['topic_info'] as Record<string, unknown> | undefined) ?? row;
       });
       return jsonResponse({ topics: normalized }, 200, requestId);
+    }
+
+    // Audio resources are Content API data and must remain behind this backend.
+    if (sub === 'recitations') {
+      const cached = cacheGet<unknown>('quran:recitations:ar', 6 * 3600_000);
+      if (cached) return jsonResponse({ recitations: cached }, 200, requestId);
+      const upstream = await qfGet('/resources/recitations', { language: 'ar' });
+      if (!upstream.ok) {
+        return errorResponse('UPSTREAM_AUDIO_ERROR', `Quran Foundation recitations error (${upstream.status})`, 502, requestId);
+      }
+      const body = await upstream.json() as { recitations?: Array<Record<string, unknown>> };
+      const recitations = (body.recitations ?? []).map((row) => ({
+        id: Number(row.id),
+        nameAr: String(row.reciter_name ?? row.name ?? ''),
+        style: row.style == null ? null : String(row.style),
+      })).filter((row) => Number.isInteger(row.id) && row.id > 0 && row.nameAr.length > 0);
+      cacheSet('quran:recitations:ar', recitations);
+      return jsonResponse({ recitations }, 200, requestId);
+    }
+
+    if (sub === 'audio/ayah') {
+      const verseKey = (url.searchParams.get('verse_key') ?? '').trim();
+      const parsed = parseVerseKey(verseKey);
+      const recitationId = parseInt(url.searchParams.get('recitation_id') ?? '', 10);
+      if (!parsed || !Number.isInteger(recitationId) || recitationId < 1) {
+        return errorResponse('INVALID_AUDIO_REQUEST', 'Valid verse_key and recitation_id are required', 400, requestId);
+      }
+      const upstream = await qfGet(
+        `/recitations/${recitationId}/by_ayah/${encodeURIComponent(verseKey)}`,
+        { fields: 'verse_key,url,format,duration,id', per_page: '1' },
+      );
+      if (!upstream.ok) {
+        return errorResponse('UPSTREAM_AUDIO_ERROR', `Quran Foundation ayah audio error (${upstream.status})`, 502, requestId);
+      }
+      const body = await upstream.json() as { audio_files?: Array<Record<string, unknown>> };
+      const row = body.audio_files?.find((item) => String(item.verse_key ?? '') === verseKey) ?? body.audio_files?.[0];
+      if (!row) return errorResponse('AUDIO_NOT_FOUND', 'No ayah audio file was returned', 404, requestId);
+      const rawUrl = String(row.url ?? '');
+      if (!rawUrl) return errorResponse('AUDIO_NOT_FOUND', 'Ayah audio URL is empty', 404, requestId);
+      const audioUrl = /^https?:\/\//i.test(rawUrl)
+        ? rawUrl
+        : `https://verses.quran.foundation/${rawUrl.replace(/^\/+/, '')}`;
+      return jsonResponse({
+        verseKey,
+        recitationId,
+        audioUrl,
+        durationMs: Number(row.duration ?? 0) || null,
+      }, 200, requestId);
+    }
+
+    if (sub === 'audio/from-ayah') {
+      const verseKey = (url.searchParams.get('verse_key') ?? '').trim();
+      const parsed = parseVerseKey(verseKey);
+      const recitationId = parseInt(url.searchParams.get('recitation_id') ?? '', 10);
+      if (!parsed || !Number.isInteger(recitationId) || recitationId < 1) {
+        return errorResponse('INVALID_AUDIO_REQUEST', 'Valid verse_key and recitation_id are required', 400, requestId);
+      }
+      const collected: Array<{ verseKey: string; audioUrl: string }> = [];
+      let page = 1;
+      let nextPage: number | null = 1;
+      while (nextPage != null && page <= 10) {
+        const upstream = await qfGet(
+          `/recitations/${recitationId}/by_chapter/${parsed.chapter}`,
+          {
+            page: String(page),
+            per_page: '50',
+            fields: 'verse_key,url',
+          },
+        );
+        if (!upstream.ok) {
+          return errorResponse('UPSTREAM_AUDIO_ERROR', `Quran Foundation chapter ayah audio error (${upstream.status})`, 502, requestId);
+        }
+        const body = await upstream.json() as {
+          audio_files?: Array<Record<string, unknown>>;
+          pagination?: { next_page?: number | null };
+        };
+        for (const row of body.audio_files ?? []) {
+          const key = String(row.verse_key ?? '');
+          const keyParsed = parseVerseKey(key);
+          if (!keyParsed || keyParsed.chapter !== parsed.chapter || keyParsed.verse < parsed.verse) continue;
+          const rawUrl = String(row.url ?? '');
+          if (!rawUrl) continue;
+          collected.push({
+            verseKey: key,
+            audioUrl: /^https?:\/\//i.test(rawUrl)
+              ? rawUrl
+              : `https://verses.quran.foundation/${rawUrl.replace(/^\/+/, '')}`,
+          });
+        }
+        nextPage = body.pagination?.next_page ?? null;
+        if (nextPage == null) break;
+        page = nextPage;
+      }
+      if (collected.length === 0) {
+        return errorResponse('AUDIO_NOT_FOUND', 'No audio files were returned from the requested ayah', 404, requestId);
+      }
+      return jsonResponse({ verseKey, recitationId, audioFiles: collected }, 200, requestId);
     }
 
     // 4) GET /quran/tafsirs — فهرس التفاسير
