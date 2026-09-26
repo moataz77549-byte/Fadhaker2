@@ -117,7 +117,7 @@ class _DownloadedRecitationsTabState extends ConsumerState<_DownloadedRecitation
             leading: const Icon(Icons.music_note_outlined),
             title: Text(surahName),
             subtitle: Text('مصحف $folder • محفوظ على الجهاز'),
-            trailing: Wrap(mainAxisSize: MainAxisSize.min, children: [
+            trailing: Row(mainAxisSize: MainAxisSize.min, children: [
               IconButton(
                 tooltip: 'تشغيل دون اتصال', icon: const Icon(Icons.play_arrow),
                 onPressed: () => ref.read(audioPlaybackProvider.notifier)
