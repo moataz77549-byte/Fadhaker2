@@ -33,14 +33,24 @@ class AboutAndSourcesScreen extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           const _SourceTile(
-            title: 'القرآن والتفسير — Quran Foundation',
-            detail: 'يُطلب النص والتفسير عبر خادم فذكر؛ لا تُخزَّن مفاتيح المصدر على الهاتف.',
+            title: 'القرآن والتفسير والتلاوات — Quran Foundation',
+            detail: 'النص العثماني، بيانات الصفحات والأسطر (QCF V2)، وسوم التجويد، '
+                'البحث، التفاسير، وملفات تلاوة الآيات تُطلب عبر خادم فذكر. '
+                'لا تُخزَّن مفاتيح Quran Foundation السرية داخل التطبيق.',
             url: 'https://api-docs.quran.foundation/',
           ),
           const _SourceTile(
-            title: 'المصحف المدني — مجمع الملك فهد',
-            detail: 'تخطيط 604 صفحات؛ صور الصفحات المتاحة تأتي عبر مرآة QuranHub. '
-                'مصدر المرآة وحقوق كل أصل قيد المراجعة.',
+            title: 'الموضوعات القرآنية — Quranpedia',
+            detail: 'تصنيف فهرسي/تفسيري مرتبط بمفاتيح الآيات، وليس جزءًا من نص القرآن. '
+                'تُخزّن بيانات الموضوعات محليًا بعد المزامنة وتُحدّث عبر delta sync. '
+                'الإصدار المرجعي وقت التكامل: 2026-09-24.',
+            url: 'https://quranpedia.net/api-docs',
+          ),
+          const _SourceTile(
+            title: 'المصحف المدني — مجمع الملك فهد / QCF',
+            detail: 'الوضع الافتراضي الجديد يبني صفحات 1–604 من بيانات التخطيط النصي '
+                'بدل تنزيل 604 صورة. صور QuranHub القديمة محفوظة مؤقتًا كمسار رجوع '
+                'غير مفعّل افتراضيًا حتى اكتمال التحقق.',
             url: 'https://qurancomplex.gov.sa/',
           ),
           const _SourceTile(
