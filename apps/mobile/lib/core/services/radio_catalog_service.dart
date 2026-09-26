@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/config/supabase_config.dart';
 import '../../features/radio/radio_station.dart';
+import '../../features/listen/data/mp3quran_api.dart';
 
 /// كتالوج محطات الإذاعة — Offline-first.
 ///
@@ -24,15 +25,18 @@ class RadioCatalogService {
     Future<SharedPreferences> Function()? prefsProvider,
     String? baseUrl,
     String? publishableKey,
+    Mp3QuranApi? mp3QuranApi,
   })  : _client = client ?? http.Client(),
         _prefsProvider = prefsProvider ?? SharedPreferences.getInstance,
         _baseUrl = baseUrl ?? SupabaseConfig.url,
-        _publishableKey = publishableKey ?? SupabaseConfig.publishableKey;
+        _publishableKey = publishableKey ?? SupabaseConfig.publishableKey,
+        _mp3QuranApi = mp3QuranApi ?? Mp3QuranApi();
 
   final http.Client _client;
   final Future<SharedPreferences> Function() _prefsProvider;
   final String _baseUrl;
   final String _publishableKey;
+  final Mp3QuranApi _mp3QuranApi;
 
   static const _cacheKey = 'fadhkur.radio_catalog.v2';
   static const _table = 'stations';
@@ -42,6 +46,7 @@ class RadioCatalogService {
   static const _select =
       'id,name_ar,name_en,stream_url,fallback_stream_url,logo_url,'
       'stream_type,station_source,is_active,is_featured,sort_order,metadata,'
+      'external_key,source_url,'
       'categories(slug)';
 
   Future<List<RadioStation>> load({Duration timeout = const Duration(seconds: 8)}) async {
@@ -71,7 +76,26 @@ class RadioCatalogService {
     final remote = await _fetchRemote(timeout: const Duration(seconds: 8));
     await _saveCache(remote);
     for (final station in _mergeWithBuiltin(remote)) {
-      if (station.id == id) return station;
+      if (station.id != id) continue;
+      if (station.sourceUrl != '${Mp3QuranApi.baseUrl}/radios?language=ar' ||
+          station.externalKey == null) return station;
+      try {
+        final radios = await _mp3QuranApi.radios();
+        for (final row in radios) {
+          if ('${row['id']}' != station.externalKey) continue;
+          final url = Uri.tryParse('${row['url'] ?? ''}'.trim());
+          if (url == null || url.scheme != 'https') return station;
+          return RadioStation(
+            id: station.id, nameAr: station.nameAr, streamUrl: url.toString(),
+            fallbackUrl: station.fallbackUrl, bitrateKbps: station.bitrateKbps,
+            isFeatured: station.isFeatured, nameEn: station.nameEn,
+            logoUrl: station.logoUrl, streamType: station.streamType,
+            kind: station.kind, sortOrder: station.sortOrder,
+            externalKey: station.externalKey, sourceUrl: station.sourceUrl,
+          );
+        }
+      } catch (_) { /* Supabase URL remains the bounded retry candidate. */ }
+      return station;
     }
     return null;
   }
@@ -155,7 +179,10 @@ class RadioCatalogService {
     }
   }
 
-  void dispose() => _client.close();
+  void dispose() {
+    _client.close();
+    _mp3QuranApi.dispose();
+  }
 }
 
 final radioCatalogService = RadioCatalogService();
