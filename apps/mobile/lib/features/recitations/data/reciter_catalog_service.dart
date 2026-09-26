@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 
 import '../../../core/config/supabase_config.dart';
 import '../../../core/models/app_models.dart';
+import '../../listen/data/listen_metadata_store.dart';
 
 enum ReciterCatalogFailure { configuration, network, permission, server, malformed }
 
@@ -45,40 +46,44 @@ class ReciterCatalogService {
     http.Client? client,
     String? baseUrl,
     String? publishableKey,
+    ListenMetadataStore? cache,
   })  : _client = client ?? http.Client(),
         _baseUrl = baseUrl ?? SupabaseConfig.url,
-        _publishableKey = publishableKey ?? SupabaseConfig.publishableKey;
+        _publishableKey = publishableKey ?? SupabaseConfig.publishableKey,
+        _cache = cache ?? listenMetadataStore;
 
   final http.Client _client;
   final String _baseUrl;
   final String _publishableKey;
+  final ListenMetadataStore _cache;
+  static const _catalogTtl = Duration(hours: 24);
 
   static const _select =
       'id,name_ar,default_riwayah,bio_arabic,metadata,is_featured';
   static const _trackSelect =
       'surah_id,audio_url,quality,bitrate_kbps,is_active';
 
-  Future<List<ReciterModel>> load() async {
-    final rows = await _getRows('reciters', {
+  Future<List<ReciterModel>> load({bool forceRefresh = false}) async {
+    final rows = await _cachedRows('reciters', 'all', {
       'select': _select,
       'is_active': 'eq.true',
       'deleted_at': 'is.null',
       'order': 'is_featured.desc,name_ar.asc',
-    });
+    }, forceRefresh: forceRefresh);
     return rows
         .map(_toReciter)
         .where((r) => r.id.isNotEmpty && r.nameAr.isNotEmpty)
         .toList(growable: false);
   }
 
-  Future<List<ReciterTrack>> loadTracks(String reciterId) async {
+  Future<List<ReciterTrack>> loadTracks(String reciterId, {bool forceRefresh = false}) async {
     if (reciterId.isEmpty) return const [];
-    final rows = await _getRows('reciter_tracks', {
+    final rows = await _cachedRows('reciter_tracks', reciterId, {
       'select': _trackSelect,
       'reciter_id': 'eq.$reciterId',
       'is_active': 'eq.true',
       'order': 'surah_id.asc',
-    });
+    }, forceRefresh: forceRefresh);
     return rows.map((row) {
       return ReciterTrack(
         surahNumber: (row['surah_id'] as num?)?.toInt() ?? 0,
@@ -86,6 +91,30 @@ class ReciterCatalogService {
         quality: '${row['quality'] ?? ''}',
       );
     }).where((t) => t.surahNumber > 0 && t.audioUrl.isNotEmpty).toList(growable: false);
+  }
+
+  Future<List<Map<String, dynamic>>> _cachedRows(
+      String dataset, String key, Map<String, String> params,
+      {required bool forceRefresh}) async {
+    ({List<Map<String, dynamic>> rows, DateTime updatedAt})? cached;
+    try { cached = await _cache.read(dataset, key); } catch (_) {
+      // SQLite is optional during widget tests and after storage failures.
+    }
+    if (!forceRefresh && cached != null &&
+        DateTime.now().difference(cached.updatedAt) < _catalogTtl) {
+      return cached.rows;
+    }
+    try {
+      final rows = await _getRows(dataset, params);
+      try { await _cache.write(dataset, key, rows); } catch (_) {}
+      return rows;
+    } on ReciterCatalogException catch (error) {
+      // A missing build configuration or denied access must never be hidden
+      // by old cached rows. Only network/server outages use the offline copy.
+      if (cached != null && (error.failure == ReciterCatalogFailure.network ||
+          error.failure == ReciterCatalogFailure.server)) return cached.rows;
+      rethrow;
+    }
   }
 
   Future<List<Map<String, dynamic>>> _getRows(
