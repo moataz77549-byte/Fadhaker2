@@ -505,7 +505,7 @@ class _ThematicAyah extends StatelessWidget {
         color: accent == null
             ? null
             : Color.alphaBlend(
-                accent.withOpacity(dark ? 0.20 : 0.12),
+                accent.withValues(alpha: dark ? 0.20 : 0.12),
                 pageColor,
               ),
         borderRadius: BorderRadius.circular(8),
