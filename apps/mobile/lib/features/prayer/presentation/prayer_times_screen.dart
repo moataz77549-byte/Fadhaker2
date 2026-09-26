@@ -133,6 +133,9 @@ class _PrayerTimesScreenState extends State<PrayerTimesScreen> {
           regularSound: _regularSound,
           offsetMinutes: _offsetMinutes,
         );
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setDouble('prayer.alarm_latitude', coordinates.latitude);
+        await prefs.setDouble('prayer.alarm_longitude', coordinates.longitude);
         _status = 'تم ضبط تنبيه الأذان للأيام القادمة.';
       } else {
         await localAlarmScheduler.cancelPrayerAlarms();

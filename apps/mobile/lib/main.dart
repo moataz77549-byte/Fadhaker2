@@ -16,6 +16,8 @@ import 'core/services/app_version_service.dart';
 import 'core/services/force_update_service.dart';
 import 'core/services/push_notification_service.dart';
 import 'core/services/quran_download_service.dart';
+import 'core/services/notification_service.dart';
+import 'core/services/local_reminder_service.dart';
 import 'core/theme/fadhkur_theme.dart';
 import 'features/reminders/data/personal_reminder_repository.dart';
 import 'features/shell/presentation/root_shell.dart';
@@ -81,6 +83,12 @@ Future<void> main() async {
       debugPrint('Reminder reschedule notice: $error');
     }),
   );
+  unawaited(localAlarmScheduler.restorePrayerAlarms().catchError((Object error) {
+    debugPrint('Prayer alarm renewal notice: $error');
+  }));
+  unawaited(localReminderService.restoreMorningEvening().catchError((Object error) {
+    debugPrint('Adhkar reminder renewal notice: $error');
+  }));
 
   // الروابط الخارجية (custom scheme مثل fadhkur://): استماع غير حاجب —
   // كل رابط وارد يُوجَّه عبر نفس allowlist الروابط (أي مسار خارجها

@@ -18,6 +18,65 @@ class DownloadsScreen extends ConsumerStatefulWidget {
 }
 
 class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
+  Future<void> _startDownload() async {
+    var selectedSurah = allSurahs.first;
+    var reciterPath = 'Alafasy_64kbps';
+    final selection = await showDialog<(int, String)>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, update) => AlertDialog(
+          title: const Text('تنزيل تلاوة سورة'),
+          content: Column(mainAxisSize: MainAxisSize.min, children: [
+            DropdownButtonFormField<int>(
+              initialValue: selectedSurah.number,
+              isExpanded: true,
+              decoration: const InputDecoration(labelText: 'السورة'),
+              items: allSurahs.map((s) => DropdownMenuItem(
+                value: s.number, child: Text(s.displayName),
+              )).toList(),
+              onChanged: (number) => update(() {
+                selectedSurah = allSurahs[number! - 1];
+              }),
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              initialValue: reciterPath,
+              decoration: const InputDecoration(labelText: 'القارئ'),
+              items: const [
+                DropdownMenuItem(value: 'Alafasy_64kbps', child: Text('مشاري العفاسي')),
+                DropdownMenuItem(value: 'Alafasy_128kbps', child: Text('مشاري العفاسي — جودة أعلى')),
+              ],
+              onChanged: (path) => update(() => reciterPath = path!),
+            ),
+          ]),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('إلغاء')),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, (selectedSurah.number, reciterPath)),
+              child: const Text('بدء التنزيل'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (selection == null) return;
+    final surah = allSurahs[selection.$1 - 1];
+    try {
+      await quranDownloadManager.enqueueRange(
+        surahNumber: surah.number,
+        surahNameAr: surah.displayName,
+        reciterNameAr: 'مشاري العفاسي',
+        reciterPath: selection.$2,
+        firstAyah: 1,
+        lastAyah: surah.ayahs,
+      );
+    } catch (error) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('تعذّر بدء التنزيل: $error')),
+      );
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -30,6 +89,11 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
     return DefaultTabController(length: 2, child: Scaffold(
       appBar: AppBar(
         title: const Text('التنزيلات والاستماع دون اتصال'),
+        actions: [IconButton(
+          tooltip: 'تنزيل سورة',
+          icon: const Icon(Icons.add_circle_outline),
+          onPressed: _startDownload,
+        )],
         bottom: const TabBar(tabs: [
           Tab(text: 'تنزيلات القرآن'),
           Tab(text: 'المصاحف الصوتية'),
@@ -41,17 +105,20 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
         builder: (context, snapshot) {
           final jobs = snapshot.data ?? const <DownloadJob>[];
           if (jobs.isEmpty) {
-            return const Center(
+            return Center(
               child: Padding(
                 padding: EdgeInsets.all(24),
                 child: Column(mainAxisSize: MainAxisSize.min, children: [
-                  Icon(Icons.download_for_offline_outlined, size: 48),
-                  SizedBox(height: 12),
-                  Text('لا توجد ملفات محملة حالياً',
+                  const Icon(Icons.download_for_offline_outlined, size: 48),
+                  const SizedBox(height: 12),
+                  const Text('لا توجد ملفات محملة حالياً',
                       style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                  SizedBox(height: 8),
-                  Text('ابدأ تنزيل سورة من شاشة القرآن للاستماع دون اتصال.',
+                  const SizedBox(height: 8),
+                  const Text('اختر سورة وقارئًا للتنزيل والاستماع دون اتصال.',
                       textAlign: TextAlign.center),
+                  const SizedBox(height: 12),
+                  FilledButton.icon(onPressed: _startDownload,
+                    icon: const Icon(Icons.download), label: const Text('تنزيل سورة')),
                 ]),
               ),
             );
