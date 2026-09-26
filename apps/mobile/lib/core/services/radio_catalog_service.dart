@@ -141,7 +141,7 @@ class RadioCatalogService {
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw StateError('Radio catalog request failed: ${response.statusCode}');
     }
-    final decoded = jsonDecode(response.body);
+    final decoded = jsonDecode(utf8.decode(response.bodyBytes));
     if (decoded is! List) throw const FormatException('Invalid radio catalog');
     return decoded
         .whereType<Map>()
