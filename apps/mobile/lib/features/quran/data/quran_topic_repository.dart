@@ -262,7 +262,7 @@ class QuranTopicRepository {
     _database = null;
     if (db != null) await db.close();
     if (_provider is QuranpediaTopicProvider) {
-      (_provider as QuranpediaTopicProvider).dispose();
+      _provider.dispose();
     }
   }
 }
