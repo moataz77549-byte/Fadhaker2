@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:fadhkur_mobile/features/listen/data/audio_url_builder.dart';
 import 'package:fadhkur_mobile/features/listen/data/mp3quran_api.dart';
 import 'package:fadhkur_mobile/features/recitations/data/reciter_catalog_service.dart';
@@ -20,17 +22,17 @@ void main() {
   test('official moshafs share an existing canonical reciter identity', () async {
     final api = Mp3QuranApi(client: MockClient((request) async {
       expect(request.url.path, '/api/v3/reciters');
-      return http.Response('{"reciters":[{"id":7,"name":"أحمد العجمي",'
+      return http.Response.bytes(utf8.encode('{"reciters":[{"id":7,"name":"أحمد العجمي",'
         '"moshaf":[{"id":80,"name":"حفص","server":"https://server6.mp3quran.net/ajm/",'
         '"surah_list":"1,2"},{"id":81,"name":"ورش",'
-        '"server":"https://server7.mp3quran.net/ajm/","surah_list":"18"}]}]}', 200);
+        '"server":"https://server7.mp3quran.net/ajm/","surah_list":"18"}]}]}'), 200);
     }));
     final service = ReciterCatalogService(
       baseUrl: 'https://example.supabase.co', publishableKey: 'test-key',
       useOfficialCatalog: true, mp3QuranApi: api,
-      client: MockClient((request) async => http.Response(
+      client: MockClient((request) async => http.Response.bytes(utf8.encode(
         '[{"id":"canonical-1","name_ar":"احمد العجمي",'
-        '"default_riwayah":"حفص"}]', 200)),
+        '"default_riwayah":"حفص"}]'), 200)),
     );
     final reciters = await service.load();
     expect(reciters, hasLength(1));
