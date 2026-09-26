@@ -296,7 +296,11 @@ class _JobCard extends ConsumerWidget {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Text(
-                    '${job.progressPercent}% • ${job.completedAyahs}/${job.totalAyahs} آية',
+                    job.sourceUrl == null
+                        ? '${job.progressPercent}% • ${job.completedAyahs}/${job.totalAyahs} آية'
+                        : job.totalBytes != null
+                            ? '${job.progressPercent}% • ${(job.downloadedBytes / (1024 * 1024)).toStringAsFixed(1)} ميجابايت'
+                            : 'تنزيل التلاوة • ${(job.downloadedBytes / (1024 * 1024)).toStringAsFixed(1)} ميجابايت',
                     style: const TextStyle(color: Color(0xFF5B677A), fontSize: 12),
                   ),
                   Row(

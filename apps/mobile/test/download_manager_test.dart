@@ -35,6 +35,25 @@ void main() {
       expect(_job(completedAyahs: 83).progress, 1.0);
     });
 
+    test('whole-surah progress and resumable fields survive restart', () {
+      final now = DateTime(2026, 9, 26);
+      final job = DownloadJob(
+        id: 'rec-1', surahNumber: 1, surahNameAr: 'الفاتحة',
+        reciterNameAr: 'القارئ', reciterPath: 'reader/moshaf',
+        sourceUrl: 'https://server.mp3quran.net/001.mp3',
+        firstAyah: 1, lastAyah: 1, downloadedBytes: 512,
+        totalBytes: 1024, status: DownloadJobStatus.downloading,
+        localPath: '/tmp/surah_001.mp3', createdAt: now, updatedAt: now,
+      );
+      expect(job.progressPercent, 50);
+      final restored = DownloadJob.fromJson(job.toJson());
+      expect(restored.status, DownloadJobStatus.queued);
+      expect(restored.sourceUrl, job.sourceUrl);
+      expect(restored.localPath, job.localPath);
+      expect(restored.totalBytes, 1024);
+      expect(restored.progress, 0.5);
+    });
+
     test('isActive covers queued and downloading only', () {
       expect(_job(status: DownloadJobStatus.queued).isActive, isTrue);
       expect(_job(status: DownloadJobStatus.downloading).isActive, isTrue);
