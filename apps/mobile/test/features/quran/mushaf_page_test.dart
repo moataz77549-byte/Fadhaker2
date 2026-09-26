@@ -33,4 +33,17 @@ void main() {
     expect(ayah.number, 255);
     expect(ayah.text, 'نص');
   });
+
+  test('QCF word derives verse key and position from location fallback', () {
+    final word = MushafWord.fromJson({
+      'location': '2:255:7',
+      'line_number': 8,
+      'text_qpc_hafs': 'ٱللَّهُ',
+    });
+    expect(word.verseKey, '2:255');
+    expect(word.position, 7);
+    expect(word.lineNumber, 8);
+    expect(word.textQpcHafs, 'ٱللَّهُ');
+  });
+
 }
