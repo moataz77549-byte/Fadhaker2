@@ -1,7 +1,7 @@
 name: fadhkur_mobile
 description: "Fadhkur (فذكر) — Holy Quran Recitations, Curated 24/7 Radios, and Mushaf Reader"
 publish_to: "none"
-version: 1.0.69-beta.1+69
+version: 1.0.69-beta.2+70
 
 environment:
   sdk: ">=3.2.0 <4.0.0"
