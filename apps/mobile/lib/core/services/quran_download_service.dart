@@ -10,18 +10,29 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:workmanager/workmanager.dart';
 
 import '../config/supabase_config.dart';
+import 'notification_service.dart';
 import '../../features/quran/data/surah_metadata.dart';
 
 const _androidDownloadRecoveryUniqueName =
     'fadhkur.android.quran.download.recovery';
 const _androidDownloadRecoveryTask =
     'fadhkur.android.quran.download.recovery.task';
+const _prayerRenewalUniqueName = 'fadhkur.android.prayer.renewal';
+const _prayerRenewalTask = 'fadhkur.android.prayer.renewal.task';
 
 /// Android-only recovery entrypoint. WorkManager starts this in a separate
 /// Flutter isolate after the UI process has been backgrounded or killed.
 @pragma('vm:entry-point')
 void androidDownloadRecoveryDispatcher() {
   Workmanager().executeTask((taskName, inputData) async {
+    if (taskName == _prayerRenewalTask) {
+      try {
+        await LocalAlarmScheduler().restorePrayerAlarms();
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }
     if (taskName != _androidDownloadRecoveryTask) return true;
     try {
       return await quranDownloadManager.runBackgroundRecovery();
@@ -36,6 +47,14 @@ void androidDownloadRecoveryDispatcher() {
 Future<void> initializeAndroidDownloadRecovery() async {
   if (!Platform.isAndroid) return;
   await Workmanager().initialize(androidDownloadRecoveryDispatcher);
+  // The exact alarm window is five days. Replenish it in the background even
+  // when the user has not opened the app; the worker checks opt-in locally.
+  await Workmanager().registerPeriodicTask(
+    _prayerRenewalUniqueName,
+    _prayerRenewalTask,
+    frequency: const Duration(hours: 12),
+    existingWorkPolicy: ExistingPeriodicWorkPolicy.keep,
+  );
 }
 
 /// Schedules a delayed recovery worker. Foreground downloads continue

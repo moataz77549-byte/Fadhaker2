@@ -12,11 +12,34 @@ import '../radio_catalog_provider.dart';
 import '../radio_station.dart';
 import '../smart_radio_controller.dart';
 
-class RadioScreen extends ConsumerWidget {
+class RadioScreen extends ConsumerStatefulWidget {
   const RadioScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<RadioScreen> createState() => _RadioScreenState();
+}
+
+class _RadioScreenState extends ConsumerState<RadioScreen> {
+  final _search = TextEditingController();
+  StationKind? _kind;
+
+  @override
+  void initState() {
+    super.initState();
+    _search.addListener(_refresh);
+  }
+
+  void _refresh() => setState(() {});
+
+  @override
+  void dispose() {
+    _search.removeListener(_refresh);
+    _search.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final stations = ref.watch(radioStationsProvider);
     // Selectors دقيقة: إعادة البناء فقط عند تغيّر حالة التشغيل/المحطة
     // الحالية — لا عند كل تحديث لموضع التشغيل (كل ثانية).
@@ -57,6 +80,12 @@ class RadioScreen extends ConsumerWidget {
               onAction: () => ref.invalidate(radioStationsProvider),
             );
           }
+          final query = _search.text.trim().toLowerCase();
+          final visible = items.where((station) =>
+              (_kind == null || station.kind == _kind) &&
+              (query.isEmpty || station.nameAr.toLowerCase().contains(query) ||
+                  (station.nameEn?.toLowerCase().contains(query) ?? false)))
+              .toList(growable: false);
           return RefreshIndicator(
             onRefresh: () async => ref.invalidate(radioStationsProvider),
             child: ListView(padding: const EdgeInsets.all(16), children: [
@@ -67,6 +96,39 @@ class RadioScreen extends ConsumerWidget {
               const SizedBox(height: 4),
               Text('محطات الإدارة الإنتاجية أولًا ثم محطات افتراضية مدمجة',
                   style: TextStyle(fontSize: 12, color: Theme.of(context).hintColor)),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _search,
+                textDirection: TextDirection.rtl,
+                decoration: InputDecoration(
+                  labelText: 'ابحث عن إذاعة أو قارئ',
+                  prefixIcon: const Icon(Icons.search),
+                  suffixIcon: query.isEmpty ? null : IconButton(
+                    tooltip: 'مسح البحث',
+                    icon: const Icon(Icons.close),
+                    onPressed: _search.clear,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(children: [
+                  ChoiceChip(
+                    label: const Text('الكل'),
+                    selected: _kind == null,
+                    onSelected: (_) => setState(() => _kind = null),
+                  ),
+                  for (final kind in StationKind.values) ...[
+                    const SizedBox(width: 6),
+                    ChoiceChip(
+                      label: Text(stationKindLabel(kind)),
+                      selected: _kind == kind,
+                      onSelected: (_) => setState(() => _kind = kind),
+                    ),
+                  ],
+                ]),
+              ),
               const SizedBox(height: 12),
               _SmartRadioCard(
                 state: smart,
@@ -107,7 +169,12 @@ class RadioScreen extends ConsumerWidget {
                 onSpeed: () => showSpeedSheet(context, ref),
               ),
               const SizedBox(height: 12),
-              ...items.map((station) {
+              if (visible.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Center(child: Text('لا توجد إذاعات مطابقة لهذا البحث')),
+                ),
+              ...visible.map((station) {
                 final active = currentUri == station.streamUrl && isPlaying;
                 return _StationTile(
                   station: station,

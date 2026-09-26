@@ -3,6 +3,7 @@ import 'package:sqflite/sqflite.dart';
 import '../domain/mushaf_page.dart';
 import '../domain/quran_navigation.dart';
 import '../domain/riwaya.dart';
+import '../domain/quran_search_result.dart';
 import 'quran_api_repository.dart';
 
 /// مستودع صفحات المصحف (وضع النص).
@@ -58,6 +59,36 @@ class MushafRepository {
       ''',
     );
     return result;
+  }
+
+  /// Searches only pages previously opened on this device. Quran text is
+  /// compared exactly as stored; no normalization touches the source text.
+  Future<List<QuranSearchResult>> searchCachedText(String query) async {
+    final needle = query.trim();
+    if (needle.length < 2) return const [];
+    final database = await _openDatabase();
+    final rows = await database.query('mushaf_pages', columns: ['payload']);
+    final results = <QuranSearchResult>[];
+    for (final row in rows) {
+      MushafPage page;
+      try {
+        page = MushafPage.decode(row['payload'] as String);
+      } catch (_) {
+        continue;
+      }
+      for (final ayah in page.ayahs) {
+        if (!ayah.text.contains(needle)) continue;
+        results.add(QuranSearchResult(
+          type: QuranSearchResultType.verseText,
+          title: ayah.text,
+          subtitle: 'الآية ${ayah.key} • نتيجة من الصفحات المحفوظة',
+          verseKey: ayah.key,
+          pageNumber: page.number,
+        ));
+        if (results.length >= 40) return results;
+      }
+    }
+    return results;
   }
 
   Future<Database> _openDatabase() async {

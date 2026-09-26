@@ -328,6 +328,7 @@ class _MushafReaderScreenState extends ConsumerState<MushafReaderScreen>
       showDragHandle: true,
       builder: (_) => QuranSearchSheet(
         api: _apiRepo,
+        mushafRepository: _mushafRepo,
         topicRepository: _topicRepo,
       ),
     );

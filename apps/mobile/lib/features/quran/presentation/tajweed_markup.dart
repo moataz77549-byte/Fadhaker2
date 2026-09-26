@@ -85,7 +85,7 @@ class TajweedMarkup {
         .replaceAll('</span>', '');
 
     final rule = RegExp(
-      r'''<tajweed\\s+class=(?:"([^"]+)"|'([^']+)'|([^>\\s]+))>(.*?)</tajweed>''',
+      r'''<tajweed\s+class=(?:"([^"]+)"|'([^']+)'|([^>\s]+))>(.*?)</tajweed>''',
       dotAll: true,
       caseSensitive: false,
     );

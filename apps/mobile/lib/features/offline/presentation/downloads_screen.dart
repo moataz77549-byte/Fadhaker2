@@ -90,6 +90,10 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
       appBar: AppBar(
         title: const Text('التنزيلات والاستماع دون اتصال'),
         actions: [IconButton(
+          tooltip: 'تصفح القراء والمصاحف المتاحة',
+          icon: const Icon(Icons.library_music_outlined),
+          onPressed: () => Navigator.of(context).pushNamed('/reciters'),
+        ), IconButton(
           tooltip: 'تنزيل سورة',
           icon: const Icon(Icons.add_circle_outline),
           onPressed: _startDownload,
@@ -116,9 +120,14 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
                   const SizedBox(height: 8),
                   const Text('اختر سورة وقارئًا للتنزيل والاستماع دون اتصال.',
                       textAlign: TextAlign.center),
-                  const SizedBox(height: 12),
-                  FilledButton.icon(onPressed: _startDownload,
-                    icon: const Icon(Icons.download), label: const Text('تنزيل سورة')),
+                      const SizedBox(height: 12),
+                      FilledButton.icon(onPressed: _startDownload,
+                        icon: const Icon(Icons.download), label: const Text('تنزيل سورة')),
+                      TextButton.icon(
+                        onPressed: () => Navigator.of(context).pushNamed('/reciters'),
+                        icon: const Icon(Icons.library_music_outlined),
+                        label: const Text('تصفح القراء والمصاحف الأخرى'),
+                      ),
                 ]),
               ),
             );
