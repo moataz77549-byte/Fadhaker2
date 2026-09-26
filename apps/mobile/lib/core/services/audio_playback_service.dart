@@ -220,8 +220,13 @@ class FadhkurAudioHandler extends audio_service.BaseAudioHandler
       ),
     );
 
-    await _player.setAudioSources(
-      uris.map((uri) => just_audio.AudioSource.uri(Uri.parse(uri))).toList(),
+    await _player.setAudioSource(
+      just_audio.ConcatenatingAudioSource(
+        useLazyPreparation: true,
+        children: uris
+            .map((uri) => just_audio.AudioSource.uri(Uri.parse(uri)))
+            .toList(growable: false),
+      ),
     );
     unawaited(_player.play());
   }
