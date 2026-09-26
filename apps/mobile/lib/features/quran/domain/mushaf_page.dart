@@ -22,8 +22,13 @@ class MushafWord {
   factory MushafWord.fromJson(Map<String, dynamic> json) {
     final location = (json['location'] ?? '').toString();
     final locationParts = location.split(':');
+    final explicitVerseKey =
+        (json['verse_key'] ?? json['verseKey'] ?? '').toString();
+    final derivedVerseKey = locationParts.length >= 2
+        ? '${locationParts[0]}:${locationParts[1]}'
+        : '';
     return MushafWord(
-      verseKey: (json['verse_key'] ?? json['verseKey'] ?? '').toString(),
+      verseKey: explicitVerseKey.isNotEmpty ? explicitVerseKey : derivedVerseKey,
       position: (json['position'] as num?)?.toInt() ??
           (locationParts.length > 2 ? int.tryParse(locationParts.last) : null) ??
           0,
