@@ -227,20 +227,33 @@ class ReciterDetailScreen extends ConsumerWidget {
                     ref.invalidate(reciterTracksProvider(reciter.id)),
               ),
               data: (tracks) {
-                final bySurah = {
-                  for (final track in tracks) track.surahNumber: track,
-                };
+                if (tracks.isEmpty) {
+                  return const Center(child: Text('لا توجد تلاوات متاحة لهذا القارئ حاليًا.'));
+                }
                 return ListView.builder(
                   padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                  itemCount: allSurahs.length,
+                  itemCount: tracks.length,
                   itemBuilder: (context, index) {
-                    final surah = allSurahs[index];
-                    final track = bySurah[surah.number];
-                    final playable =
-                        track != null && track.audioUrl.isNotEmpty;
+                    final track = tracks[index];
+                    if (track.surahNumber < 1 || track.surahNumber > allSurahs.length) {
+                      return const SizedBox.shrink();
+                    }
+                    final surah = allSurahs[track.surahNumber - 1];
+                    final playable = track.audioUrl.isNotEmpty;
                     final sName = surah.displayName;
+                    final firstInMoshaf = index == 0 ||
+                        tracks[index - 1].moshafId != track.moshafId;
 
-                    return Card(
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                      if (firstInMoshaf && track.moshafName.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(8, 14, 8, 8),
+                          child: Text(track.moshafName,
+                              style: Theme.of(context).textTheme.titleMedium),
+                        ),
+                      Card(
                       margin: const EdgeInsets.only(bottom: 8),
                       child: ListTile(
                         leading: CircleAvatar(
@@ -274,7 +287,8 @@ class ReciterDetailScreen extends ConsumerWidget {
                               tooltip: 'تنزيل التلاوة',
                               onPressed: !playable
                                   ? null
-                                  : () => _downloadTrack(context, track.audioUrl, reciter.id, surah.number),
+                                  : () => _downloadTrack(context, track.audioUrl,
+                                        reciter.id, track.moshafId, surah.number),
                             ),
                             IconButton(
                               icon: const Icon(
@@ -287,11 +301,13 @@ class ReciterDetailScreen extends ConsumerWidget {
                                   ? null
                                   : () => _playTrack(audioNotifier, sName,
                                         reciter.nameAr, track.audioUrl,
-                                        reciter.id, surah.number),
+                                        reciter.id, track.moshafId, surah.number),
                             ),
                           ],
                         ),
                       ),
+                      ),
+                      ],
                     );
                   },
                 );
@@ -303,16 +319,19 @@ class ReciterDetailScreen extends ConsumerWidget {
     );
   }
 
-  Future<File> _trackFile(String reciterId, int surahNumber) async {
+  Future<File> _trackFile(String reciterId, String moshafId, int surahNumber) async {
     final root = await getApplicationDocumentsDirectory();
     final safeId = reciterId.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
-    return File('${root.path}/quran/recitations/$safeId/'
+    final safeMoshaf = moshafId.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
+    final directory = safeMoshaf.isEmpty ? safeId : '$safeId/$safeMoshaf';
+    return File('${root.path}/quran/recitations/$directory/'
         'surah_${surahNumber.toString().padLeft(3, '0')}.mp3');
   }
 
   Future<void> _playTrack(FadhkurAudioNotifier audio, String title,
-      String reciter, String url, String reciterId, int surahNumber) async {
-    final local = await _trackFile(reciterId, surahNumber);
+      String reciter, String url, String reciterId, String moshafId,
+      int surahNumber) async {
+    final local = await _trackFile(reciterId, moshafId, surahNumber);
     if (await local.exists() && await local.length() > 0) {
       await audio.playOfflineTrack(title, reciter, local.path);
     } else {
@@ -324,6 +343,7 @@ class ReciterDetailScreen extends ConsumerWidget {
     BuildContext context,
     String url,
     String reciterId,
+    String moshafId,
     int surahNumber,
   ) async {
     final messenger = ScaffoldMessenger.of(context);
@@ -333,7 +353,7 @@ class ReciterDetailScreen extends ConsumerWidget {
       );
       final uri = Uri.tryParse(url);
       if (uri == null || uri.scheme != 'https') throw const HttpException('Invalid audio URL');
-      final file = await _trackFile(reciterId, surahNumber);
+      final file = await _trackFile(reciterId, moshafId, surahNumber);
       await file.parent.create(recursive: true);
       final partial = File('${file.path}.part');
       final client = http.Client();
