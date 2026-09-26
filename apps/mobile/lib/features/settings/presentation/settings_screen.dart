@@ -82,6 +82,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             .requestConsentAndRegisterDevice(context);
         if (!ok) {
           if (mounted) setState(() => _notificationsConsent = false);
+          if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('لم يُسجّل الجهاز للإشعارات. تحقق من الاتصال والأذونات ثم حاول مجددًا.'),
+          ));
           return;
         }
       } else {

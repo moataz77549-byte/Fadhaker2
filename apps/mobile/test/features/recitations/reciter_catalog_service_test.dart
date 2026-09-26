@@ -73,10 +73,10 @@ void main() {
   });
 
   test('official moshafs remain available when curated backend is unconfigured', () async {
-    final official = Mp3QuranApi(client: MockClient((request) async => http.Response(
-      '{"reciters":[{"id":7,"name":"قارئ","moshaf":[{"id":11,'
+    final official = Mp3QuranApi(client: MockClient((request) async => http.Response.bytes(
+      utf8.encode('{"reciters":[{"id":7,"name":"قارئ","moshaf":[{"id":11,'
       '"name":"حفص مرتل","server":"https://server.mp3quran.net/test/",'
-      '"surah_list":"1,2"}]}]}', 200,
+      '"surah_list":"1,2"}]}]}'), 200,
     )));
     final catalog = ReciterCatalogService(
       client: MockClient((request) async => throw StateError('backend should not be called')),
