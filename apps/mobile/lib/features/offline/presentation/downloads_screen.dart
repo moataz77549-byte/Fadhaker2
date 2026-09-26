@@ -28,7 +28,7 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
           title: const Text('تنزيل تلاوة سورة'),
           content: Column(mainAxisSize: MainAxisSize.min, children: [
             DropdownButtonFormField<int>(
-              value: selectedSurah.number,
+              initialValue: selectedSurah.number,
               isExpanded: true,
               decoration: const InputDecoration(labelText: 'السورة'),
               items: allSurahs.map((s) => DropdownMenuItem(
@@ -40,7 +40,7 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
             ),
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(
-              value: reciterPath,
+              initialValue: reciterPath,
               decoration: const InputDecoration(labelText: 'القارئ'),
               items: const [
                 DropdownMenuItem(value: 'Alafasy_64kbps', child: Text('مشاري العفاسي')),
