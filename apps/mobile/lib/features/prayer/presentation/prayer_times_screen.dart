@@ -25,6 +25,7 @@ class _PrayerTimesScreenState extends State<PrayerTimesScreen> {
   static const _alarmsKey = 'prayer.alarms_enabled';
   static const _fajrSoundKey = 'prayer.fajr_sound';
   static const _regularSoundKey = 'prayer.regular_sound';
+  static const _offsetKey = 'prayer.alarm_offset_minutes';
 
   PrayerCalculationMethod _method = PrayerCalculationMethod.ummAlQura;
   bool _hanafiAsr = false;
@@ -32,6 +33,7 @@ class _PrayerTimesScreenState extends State<PrayerTimesScreen> {
   bool _busy = false;
   String _fajrSound = 'adhan_madinah';
   String _regularSound = 'adhan_makkah';
+  int _offsetMinutes = 0;
   String? _status;
   Future<GeoCoordinates>? _coordinatesFuture;
 
@@ -59,6 +61,7 @@ class _PrayerTimesScreenState extends State<PrayerTimesScreen> {
       _alarmsEnabled = prefs.getBool(_alarmsKey) ?? false;
       _fajrSound = prefs.getString(_fajrSoundKey) ?? 'adhan_madinah';
       _regularSound = prefs.getString(_regularSoundKey) ?? 'adhan_makkah';
+      _offsetMinutes = (prefs.getInt(_offsetKey) ?? 0).clamp(-30, 30).toInt();
     });
   }
 
@@ -70,6 +73,7 @@ class _PrayerTimesScreenState extends State<PrayerTimesScreen> {
       prefs.setBool(_alarmsKey, _alarmsEnabled),
       prefs.setString(_fajrSoundKey, _fajrSound),
       prefs.setString(_regularSoundKey, _regularSound),
+      prefs.setInt(_offsetKey, _offsetMinutes),
     ]);
   }
 
@@ -127,6 +131,7 @@ class _PrayerTimesScreenState extends State<PrayerTimesScreen> {
           hanafiAsr: _hanafiAsr,
           fajrSound: _fajrSound,
           regularSound: _regularSound,
+          offsetMinutes: _offsetMinutes,
         );
         _status = 'تم ضبط تنبيه الأذان للأيام القادمة.';
       } else {
@@ -146,6 +151,15 @@ class _PrayerTimesScreenState extends State<PrayerTimesScreen> {
 
   Future<void> _rescheduleIfEnabled() async {
     if (_alarmsEnabled) await _applyAlarms(true);
+  }
+
+  Future<void> _previewSound() async {
+    try {
+      await localAlarmScheduler.previewAdhan(_regularSound);
+      if (mounted) setState(() => _status = 'أُرسل تنبيه تجريبي بصوت المؤذن المختار.');
+    } catch (_) {
+      if (mounted) setState(() => _status = 'تعذّرت التجربة. فعّل إذن الإشعارات من إعدادات الجهاز.');
+    }
   }
 
   String _format(DateTime time) =>
@@ -179,6 +193,7 @@ class _PrayerTimesScreenState extends State<PrayerTimesScreen> {
             busy: _busy,
             fajrSound: _fajrSound,
             regularSound: _regularSound,
+            offsetMinutes: _offsetMinutes,
             status: _status,
             soundItems: _soundItems,
             format: _format,
@@ -206,6 +221,13 @@ class _PrayerTimesScreenState extends State<PrayerTimesScreen> {
               _rescheduleIfEnabled();
             },
             onAlarmsChanged: _applyAlarms,
+            onPreviewSound: _previewSound,
+            onOffsetChanged: (value) {
+              if (value == null) return;
+              setState(() => _offsetMinutes = value);
+              unawaited(_persistSettings());
+              unawaited(_rescheduleIfEnabled());
+            },
           );
         },
       ),
@@ -273,6 +295,7 @@ class _TimetableView extends StatelessWidget {
   final bool busy;
   final String fajrSound;
   final String regularSound;
+  final int offsetMinutes;
   final String? status;
   final List<DropdownMenuItem<String>> soundItems;
   final String Function(DateTime) format;
@@ -281,6 +304,8 @@ class _TimetableView extends StatelessWidget {
   final ValueChanged<String?> onRegularSoundChanged;
   final ValueChanged<bool> onHanafiAsrChanged;
   final ValueChanged<bool> onAlarmsChanged;
+  final ValueChanged<int?> onOffsetChanged;
+  final VoidCallback onPreviewSound;
 
   const _TimetableView({
     required this.coordinates,
@@ -290,6 +315,7 @@ class _TimetableView extends StatelessWidget {
     required this.busy,
     required this.fajrSound,
     required this.regularSound,
+    required this.offsetMinutes,
     required this.status,
     required this.soundItems,
     required this.format,
@@ -298,6 +324,8 @@ class _TimetableView extends StatelessWidget {
     required this.onRegularSoundChanged,
     required this.onHanafiAsrChanged,
     required this.onAlarmsChanged,
+    required this.onOffsetChanged,
+    required this.onPreviewSound,
   });
 
   @override
@@ -369,6 +397,24 @@ class _TimetableView extends StatelessWidget {
           decoration: const InputDecoration(labelText: 'مؤذن بقية الصلوات'),
           items: soundItems,
           onChanged: busy ? null : onRegularSoundChanged,
+        ),
+        const SizedBox(height: 12),
+        DropdownButtonFormField<int>(
+          initialValue: offsetMinutes,
+          decoration: const InputDecoration(labelText: 'توقيت تنبيه الأذان بالنسبة للتقويم'),
+          items: const [-30, -20, -15, -10, -5, 0, 5, 10, 15, 20, 30]
+              .map((minutes) => DropdownMenuItem(
+                    value: minutes,
+                    child: Text(minutes == 0 ? 'عند وقت الصلاة' :
+                        minutes < 0 ? 'قبل الوقت بـ ${-minutes} دقائق' : 'بعد الوقت بـ $minutes دقائق'),
+                  )).toList(),
+          onChanged: busy ? null : onOffsetChanged,
+        ),
+        const SizedBox(height: 8),
+        OutlinedButton.icon(
+          onPressed: busy ? null : onPreviewSound,
+          icon: const Icon(Icons.notifications_active_outlined),
+          label: const Text('تجربة صوت المؤذن والإشعار'),
         ),
         SwitchListTile(
           title: const Text('حساب العصر على المذهب الحنفي'),
