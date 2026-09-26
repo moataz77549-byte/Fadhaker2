@@ -46,7 +46,7 @@ class QuranLocation {
         (parts.length > 1 ? int.tryParse(parts[1]) : null) ??
         1;
     return QuranLocation(
-      pageNumber: ((json['pageNumber'] as num?)?.toInt() ?? 1).clamp(1, 604),
+      pageNumber: ((json['pageNumber'] as num?)?.toInt() ?? 1).clamp(1, 604).toInt(),
       surahNumber: surah,
       ayahNumber: ayah,
       verseKey: key.isEmpty ? '$surah:$ayah' : key,
