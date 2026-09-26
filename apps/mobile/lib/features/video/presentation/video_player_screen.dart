@@ -7,6 +7,7 @@ import 'package:video_player/video_player.dart';
 import 'package:youtube_player_flutter/youtube_player_flutter.dart';
 
 import '../video_channel.dart';
+import '../video_channel_repository.dart';
 
 /// شاشة تشغيل قناة فيديو.
 ///
@@ -40,7 +41,17 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   }
 
   Future<void> _initialize() async {
-    final channel = widget.channel;
+    VideoChannel channel;
+    try {
+      channel = await videoChannelRepository.resolveForPlayback(widget.channel);
+    } catch (_) {
+      if (mounted) setState(() {
+        _loading = false;
+        _error = 'تعذّر تحديث رابط البث. تحقق من الاتصال وحاول مجددًا.';
+      });
+      return;
+    }
+    if (!mounted) return;
     if (channel.sourceType == VideoSourceType.youtube) {
       _initializeYoutube(channel);
       return;
@@ -71,7 +82,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
       final videoController = VideoPlayerController.networkUrl(
         Uri.parse(channel.streamUrl),
       );
-      await videoController.initialize();
+      await videoController.initialize().timeout(const Duration(seconds: 15));
       final chewieController = ChewieController(
         videoPlayerController: videoController,
         autoPlay: true,
