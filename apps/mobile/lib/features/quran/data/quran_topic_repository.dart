@@ -51,7 +51,11 @@ class QuranTopicRepository {
       return;
     }
     if (changed) {
-      await _fullSync(db);
+      try {
+        await _fullSync(db);
+      } catch (_) {
+        // A cached dataset remains usable when a background refresh fails.
+      }
     } else {
       await db.update(
         'topic_source',

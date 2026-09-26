@@ -165,7 +165,7 @@ class _LastPositionCard extends StatelessWidget {
             onTap: () => Navigator.of(context).push(
               MaterialPageRoute(
                 builder: (_) => MushafReaderScreen(
-                  initialPage: page,
+                  initialPage: hasProgress ? null : page,
                   initialRiwayaId: progress?.riwayaId,
                 ),
               ),

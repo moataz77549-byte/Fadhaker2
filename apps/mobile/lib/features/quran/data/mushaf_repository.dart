@@ -27,6 +27,12 @@ class MushafRepository {
       limit: 1,
     );
     if (cached.isNotEmpty) {
+      await database.update(
+        'mushaf_pages',
+        {'updated_at': DateTime.now().millisecondsSinceEpoch},
+        where: 'cache_key = ?',
+        whereArgs: [cacheKey],
+      );
       return MushafPage.decode(cached.first['payload'] as String);
     }
     final result = await _api.getPageText(riwaya: riwaya, page: validated);
