@@ -125,14 +125,25 @@ class _QuranSettingsSheetState extends State<QuranSettingsSheet> {
                 const SizedBox(height: 16),
                 const Text('وضع القراءة', style: TextStyle(fontWeight: FontWeight.bold)),
                 const SizedBox(height: 8),
-                SegmentedButton<QuranReadingMode>(
-                  segments: const [
-                    ButtonSegment(value: QuranReadingMode.image, icon: Icon(Icons.image_outlined), label: Text('مصوّر')),
-                    ButtonSegment(value: QuranReadingMode.text, icon: Icon(Icons.text_fields), label: Text('نص')),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final entry in const [
+                      (QuranReadingMode.madani, 'المدينة', Icons.menu_book_rounded),
+                      (QuranReadingMode.tajweed, 'التجويد', Icons.palette_outlined),
+                      (QuranReadingMode.thematic, 'موضوعي', Icons.layers_outlined),
+                      (QuranReadingMode.text, 'نص', Icons.text_fields),
+                    ])
+                      ChoiceChip(
+                        avatar: Icon(entry.$3, size: 17),
+                        label: Text(entry.$2),
+                        selected: values.mode == entry.$1,
+                        onSelected: (_) => _update(
+                          () => widget.stateRepository.saveReadingMode(entry.$1),
+                        ),
+                      ),
                   ],
-                  selected: {values.mode},
-                  onSelectionChanged: (v) => _update(() => widget.stateRepository.saveReadingMode(v.first)),
-                  showSelectedIcon: false,
                 ),
                 const SizedBox(height: 16),
                 const Text('الخط', style: TextStyle(fontWeight: FontWeight.bold)),
