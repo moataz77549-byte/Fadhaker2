@@ -125,25 +125,18 @@ class _QuranSettingsSheetState extends State<QuranSettingsSheet> {
                 const SizedBox(height: 16),
                 const Text('وضع القراءة', style: TextStyle(fontWeight: FontWeight.bold)),
                 const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    for (final entry in const [
-                      (QuranReadingMode.madani, 'المدينة', Icons.menu_book_rounded),
-                      (QuranReadingMode.tajweed, 'التجويد', Icons.palette_outlined),
-                      (QuranReadingMode.thematic, 'موضوعي', Icons.layers_outlined),
-                      (QuranReadingMode.text, 'نص', Icons.text_fields),
-                    ])
-                      ChoiceChip(
-                        avatar: Icon(entry.$3, size: 17),
-                        label: Text(entry.$2),
-                        selected: values.mode == entry.$1,
-                        onSelected: (_) => _update(
-                          () => widget.stateRepository.saveReadingMode(entry.$1),
-                        ),
-                      ),
-                  ],
+                Wrap(spacing: 8, runSpacing: 8, children: [
+                  for (final option in const [
+                    (QuranReadingMode.image, 'المدينة'),
+                    (QuranReadingMode.tajweed, 'التجويد'),
+                    (QuranReadingMode.thematic, 'موضوعي'),
+                    (QuranReadingMode.text, 'نص'),
+                  ]) ChoiceChip(
+                    label: Text(option.$2),
+                    selected: values.mode == option.$1,
+                    onSelected: (_) => _update(() => widget.stateRepository.saveReadingMode(option.$1)),
+                  ),
+                ],
                 ),
                 const SizedBox(height: 16),
                 const Text('الخط', style: TextStyle(fontWeight: FontWeight.bold)),
