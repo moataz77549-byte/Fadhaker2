@@ -33,9 +33,15 @@ class ListenHubScreen extends ConsumerWidget {
       ),
       const _ListenItem(
         title: 'القنوات المرئية',
-        subtitle: 'دروس ومحاضرات وقنوات موثقة',
+        subtitle: 'بث مباشر من روابط المصدر الرسمي',
         icon: Icons.ondemand_video_rounded,
         route: '/video',
+      ),
+      const _ListenItem(
+        title: 'التنزيلات',
+        subtitle: 'سور وتلاوات محفوظة للاستماع دون اتصال',
+        icon: Icons.download_for_offline_outlined,
+        route: '/downloads',
       ),
     ];
 
