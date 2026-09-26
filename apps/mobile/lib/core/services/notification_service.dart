@@ -394,9 +394,7 @@ class LocalAlarmScheduler {
       channelDescription: channel.description,
       importance: channel.importance,
       priority: Priority.high,
-      category: channel.id.startsWith('fadhkur_adhan_') || channel.id == NotificationChannels.adhan.id
-          ? AndroidNotificationCategory.alarm
-          : AndroidNotificationCategory.reminder,
+      category: AndroidNotificationCategory.alarm,
       fullScreenIntent: false,
       playSound: true,
       sound: channel.sound,
