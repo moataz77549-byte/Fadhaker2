@@ -10,18 +10,29 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:workmanager/workmanager.dart';
 
 import '../config/supabase_config.dart';
+import 'notification_service.dart';
 import '../../features/quran/data/surah_metadata.dart';
 
 const _androidDownloadRecoveryUniqueName =
     'fadhkur.android.quran.download.recovery';
 const _androidDownloadRecoveryTask =
     'fadhkur.android.quran.download.recovery.task';
+const _prayerRenewalUniqueName = 'fadhkur.android.prayer.renewal';
+const _prayerRenewalTask = 'fadhkur.android.prayer.renewal.task';
 
 /// Android-only recovery entrypoint. WorkManager starts this in a separate
 /// Flutter isolate after the UI process has been backgrounded or killed.
 @pragma('vm:entry-point')
 void androidDownloadRecoveryDispatcher() {
   Workmanager().executeTask((taskName, inputData) async {
+    if (taskName == _prayerRenewalTask) {
+      try {
+        await LocalAlarmScheduler().restorePrayerAlarms();
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }
     if (taskName != _androidDownloadRecoveryTask) return true;
     try {
       return await quranDownloadManager.runBackgroundRecovery();
@@ -36,6 +47,14 @@ void androidDownloadRecoveryDispatcher() {
 Future<void> initializeAndroidDownloadRecovery() async {
   if (!Platform.isAndroid) return;
   await Workmanager().initialize(androidDownloadRecoveryDispatcher);
+  // The exact alarm window is five days. Replenish it in the background even
+  // when the user has not opened the app; the worker checks opt-in locally.
+  await Workmanager().registerPeriodicTask(
+    _prayerRenewalUniqueName,
+    _prayerRenewalTask,
+    frequency: const Duration(hours: 12),
+    existingWorkPolicy: ExistingPeriodicWorkPolicy.keep,
+  );
 }
 
 /// Schedules a delayed recovery worker. Foreground downloads continue
@@ -92,12 +111,14 @@ class DownloadJob {
   final String surahNameAr;
   final String reciterNameAr;
   final String reciterPath;
+  final String? sourceUrl;
   final int firstAyah;
   final int lastAyah;
   final String? expectedSha256;
   final DownloadJobStatus status;
   final int completedAyahs;
   final int downloadedBytes;
+  final int? totalBytes;
   final String? localPath;
   final String? actualSha256;
   final String? errorMessage;
@@ -111,12 +132,14 @@ class DownloadJob {
     required this.surahNameAr,
     required this.reciterNameAr,
     required this.reciterPath,
+    this.sourceUrl,
     required this.firstAyah,
     required this.lastAyah,
     this.expectedSha256,
     this.status = DownloadJobStatus.queued,
     this.completedAyahs = 0,
     this.downloadedBytes = 0,
+    this.totalBytes,
     this.localPath,
     this.actualSha256,
     this.errorMessage,
@@ -126,7 +149,9 @@ class DownloadJob {
   });
 
   int get totalAyahs => max(1, lastAyah - firstAyah + 1);
-  double get progress => (completedAyahs / totalAyahs).clamp(0.0, 1.0);
+  double get progress => sourceUrl != null && totalBytes != null && totalBytes! > 0
+      ? (downloadedBytes / totalBytes!).clamp(0.0, 1.0)
+      : (completedAyahs / totalAyahs).clamp(0.0, 1.0);
   int get progressPercent => (progress * 100).round();
 
   bool get isActive => status == DownloadJobStatus.queued || status == DownloadJobStatus.downloading;
@@ -137,6 +162,7 @@ class DownloadJob {
     DownloadJobStatus? status,
     int? completedAyahs,
     int? downloadedBytes,
+    int? totalBytes,
     String? localPath,
     String? actualSha256,
     String? errorMessage,
@@ -148,12 +174,14 @@ class DownloadJob {
       surahNameAr: surahNameAr,
       reciterNameAr: reciterNameAr,
       reciterPath: reciterPath,
+      sourceUrl: sourceUrl,
       firstAyah: firstAyah,
       lastAyah: lastAyah,
       expectedSha256: expectedSha256,
       status: status ?? this.status,
       completedAyahs: completedAyahs ?? this.completedAyahs,
       downloadedBytes: downloadedBytes ?? this.downloadedBytes,
+      totalBytes: totalBytes ?? this.totalBytes,
       localPath: localPath ?? this.localPath,
       actualSha256: actualSha256 ?? this.actualSha256,
       errorMessage: errorMessage,
@@ -169,12 +197,14 @@ class DownloadJob {
         'surahNameAr': surahNameAr,
         'reciterNameAr': reciterNameAr,
         'reciterPath': reciterPath,
+        'sourceUrl': sourceUrl,
         'firstAyah': firstAyah,
         'lastAyah': lastAyah,
         'expectedSha256': expectedSha256,
         'status': status.name,
         'completedAyahs': completedAyahs,
         'downloadedBytes': downloadedBytes,
+        'totalBytes': totalBytes,
         'localPath': localPath,
         'actualSha256': actualSha256,
         'errorMessage': errorMessage,
@@ -196,12 +226,14 @@ class DownloadJob {
       surahNameAr: '${json['surahNameAr'] ?? ''}',
       reciterNameAr: '${json['reciterNameAr'] ?? ''}',
       reciterPath: '${json['reciterPath'] ?? ''}',
+      sourceUrl: json['sourceUrl']?.toString(),
       firstAyah: (json['firstAyah'] as num?)?.toInt() ?? 1,
       lastAyah: (json['lastAyah'] as num?)?.toInt() ?? 1,
       expectedSha256: json['expectedSha256']?.toString(),
       status: status,
       completedAyahs: (json['completedAyahs'] as num?)?.toInt() ?? 0,
       downloadedBytes: (json['downloadedBytes'] as num?)?.toInt() ?? 0,
+      totalBytes: (json['totalBytes'] as num?)?.toInt(),
       localPath: json['localPath']?.toString(),
       actualSha256: json['actualSha256']?.toString(),
       errorMessage: json['errorMessage']?.toString(),
@@ -429,6 +461,54 @@ class QuranDownloadManager {
     return job;
   }
 
+  /// Official MP3Quran whole-surah audio uses the same persistent queue as
+  /// the ayah downloader. The catalog URL has already been constructed from
+  /// an advertised moshaf/surah pair; verify its host again at this boundary.
+  Future<DownloadJob> enqueueRecitation({
+    required int surahNumber,
+    required String surahNameAr,
+    required String reciterNameAr,
+    required String reciterId,
+    required String moshafId,
+    required String audioUrl,
+  }) async {
+    final uri = Uri.tryParse(audioUrl);
+    if (surahNumber < 1 || surahNumber > 114 || uri == null ||
+        uri.scheme != 'https' ||
+        !(uri.host == 'mp3quran.net' || uri.host.endsWith('.mp3quran.net'))) {
+      throw ArgumentError('مصدر التلاوة غير معتمد');
+    }
+    await init();
+    final safeReader = reciterId.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
+    final safeMoshaf = moshafId.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
+    final identity = safeMoshaf.isEmpty ? safeReader : '$safeReader/$safeMoshaf';
+    for (final existing in _jobs.values) {
+      if (existing.sourceUrl == audioUrl && existing.surahNumber == surahNumber &&
+          existing.status != DownloadJobStatus.failed &&
+          existing.status != DownloadJobStatus.canceled) return existing;
+    }
+    final directory = await getApplicationDocumentsDirectory();
+    final file = File('${directory.path}/quran/recitations/$identity/'
+        'surah_${surahNumber.toString().padLeft(3, '0')}.mp3');
+    final now = DateTime.now();
+    final job = DownloadJob(
+      id: 'rec-${now.microsecondsSinceEpoch}-$surahNumber',
+      surahNumber: surahNumber, surahNameAr: surahNameAr,
+      reciterNameAr: reciterNameAr, reciterPath: identity,
+      sourceUrl: audioUrl, firstAyah: 1, lastAyah: 1,
+      localPath: file.path, createdAt: now, updatedAt: now,
+      status: await file.exists() && await file.length() > 0
+          ? DownloadJobStatus.completed : DownloadJobStatus.queued,
+      completedAyahs: await file.exists() && await file.length() > 0 ? 1 : 0,
+    );
+    _jobs[job.id] = job;
+    await _persist();
+    _emit();
+    _pump();
+    if (job.isActive) unawaited(_scheduleAndroidDownloadRecovery());
+    return job;
+  }
+
   Future<void> pause(String id) async {
     final job = _jobs[id];
     if (job == null || !job.isActive) return;
@@ -462,6 +542,10 @@ class QuranDownloadManager {
     _activeClients[id]?.close();
     _activeClients.remove(id);
     await _deletePartsDir(job);
+    if (job.sourceUrl != null && job.localPath != null) {
+      final partial = File('${job.localPath}.part');
+      if (await partial.exists()) await partial.delete();
+    }
     _jobs.remove(id);
     await _persist();
     _emit();
@@ -476,6 +560,10 @@ class QuranDownloadManager {
     _activeClients[id]?.close();
     _activeClients.remove(id);
     await _deletePartsDir(job);
+    if (job.sourceUrl != null && job.localPath != null) {
+      final partial = File('${job.localPath}.part');
+      if (await partial.exists()) await partial.delete();
+    }
     final path = job.localPath;
     if (path != null && path.isNotEmpty) {
       try {
@@ -517,6 +605,10 @@ class QuranDownloadManager {
     final client = http.Client();
     _activeClients[id] = client;
     try {
+      if (job.sourceUrl != null) {
+        await _downloadRecitation(client, job);
+        return;
+      }
       final partsDir = await _partsDir(job);
       for (var ayah = job.firstAyah + job.completedAyahs; ayah <= job.lastAyah; ayah++) {
         if (_cancelRequested.contains(id)) return;
@@ -561,6 +653,75 @@ class QuranDownloadManager {
         client.close();
       } catch (_) {}
     }
+  }
+
+  Future<void> _downloadRecitation(http.Client client, DownloadJob job) async {
+    final output = File(job.localPath!);
+    final partial = File('${output.path}.part');
+    await output.parent.create(recursive: true);
+    var offset = await partial.exists() ? await partial.length() : 0;
+    final request = http.Request('GET', Uri.parse(job.sourceUrl!));
+    if (offset > 0) request.headers['Range'] = 'bytes=$offset-';
+    final response = await client.send(request).timeout(const Duration(seconds: 30));
+    if (response.statusCode != 200 && response.statusCode != 206) {
+      await response.stream.drain<void>();
+      throw HttpException('فشل تحميل التلاوة: ${response.statusCode}');
+    }
+    // Some servers ignore Range: discard the old part and start at byte 0.
+    // Never append a full response to an existing partial file.
+    if (response.statusCode == 206) {
+      final range = response.headers['content-range'] ?? '';
+      if (!range.startsWith('bytes $offset-')) {
+        await response.stream.drain<void>();
+        throw const HttpException('نطاق الاستئناف غير صالح');
+      }
+    } else {
+      offset = 0;
+    }
+    final total = response.statusCode == 206 && response.contentLength != null
+        ? offset + response.contentLength! : response.contentLength;
+    final sink = partial.openWrite(mode: offset > 0 ? FileMode.append : FileMode.write);
+    var received = offset;
+    var reported = offset;
+    try {
+      await for (final bytes in response.stream.timeout(const Duration(seconds: 35))) {
+        final current = _jobs[job.id];
+        if (_cancelRequested.contains(job.id)) throw _CancelledException();
+        if (current == null || current.status != DownloadJobStatus.downloading) {
+          throw _PausedException();
+        }
+        sink.add(bytes);
+        received += bytes.length;
+        if (received - reported >= 256 * 1024) {
+          _jobs[job.id] = current.copyWith(downloadedBytes: received, totalBytes: total);
+          await _persist();
+          _emit();
+          reported = received;
+        }
+      }
+    } finally {
+      await sink.flush();
+      await sink.close();
+    }
+    if (_cancelRequested.contains(job.id)) throw _CancelledException();
+    if (_jobs[job.id]?.status != DownloadJobStatus.downloading) throw _PausedException();
+    if (received == 0 || (total != null && received != total)) {
+      throw const HttpException('ملف التلاوة غير مكتمل');
+    }
+    final digest = (await sha256.bind(partial.openRead()).first).toString();
+    if (job.expectedSha256 != null &&
+        digest.toLowerCase() != job.expectedSha256!.toLowerCase()) {
+      throw const HttpException('فشل التحقق من سلامة التلاوة');
+    }
+    if (await output.exists()) await output.delete();
+    await partial.rename(output.path);
+    _jobs[job.id] = _jobs[job.id]!.copyWith(
+      status: DownloadJobStatus.completed, completedAyahs: 1,
+      downloadedBytes: received, totalBytes: total,
+      actualSha256: digest, localPath: output.path, errorMessage: null,
+    );
+    await _persist();
+    _emit();
   }
 
   Future<void> _downloadAyahWithRetry(

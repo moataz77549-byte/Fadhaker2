@@ -20,6 +20,14 @@ void main() {
     expect(plain, contains('ـٰ'));
     expect(plain, contains('١'));
     expect(plain, isNot(contains('<tajweed')));
+    final colored = span.children!.whereType<TextSpan>().where(
+      (part) => part.text == 'ٱ' || part.text == 'ـٰ',
+    ).toList();
+    expect(colored, hasLength(2));
+    expect(colored.first.style?.color,
+        TajweedMarkup.colorForClass('ham_wasl', false));
+    expect(colored.last.style?.color,
+        TajweedMarkup.colorForClass('madda_normal', false));
   });
 
   test('known Quran Foundation rule classes have semantic colors', () {

@@ -1,6 +1,5 @@
 import 'dart:io';
 
-import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -8,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/models/app_models.dart';
 import '../../../core/repositories/fadhkur_repository.dart';
 import '../../../core/services/audio_playback_service.dart';
+import '../../../core/services/quran_download_service.dart';
 import '../../quran/data/surah_metadata.dart';
 import '../data/reciter_catalog_service.dart';
 
@@ -288,7 +288,8 @@ class ReciterDetailScreen extends ConsumerWidget {
                               onPressed: !playable
                                   ? null
                                   : () => _downloadTrack(context, track.audioUrl,
-                                        reciter.id, track.moshafId, surah.number),
+                                        reciter.id, reciter.nameAr, track.moshafId,
+                                        surah.number),
                             ),
                             IconButton(
                               icon: const Icon(
@@ -343,43 +344,27 @@ class ReciterDetailScreen extends ConsumerWidget {
     BuildContext context,
     String url,
     String reciterId,
+    String reciterName,
     String moshafId,
     int surahNumber,
   ) async {
     final messenger = ScaffoldMessenger.of(context);
     try {
-      messenger.showSnackBar(
-        const SnackBar(content: Text('جارٍ تنزيل التلاوة...')),
+      final job = await quranDownloadManager.enqueueRecitation(
+        surahNumber: surahNumber,
+        surahNameAr: allSurahs[surahNumber - 1].displayName,
+        reciterNameAr: reciterName,
+        reciterId: reciterId,
+        moshafId: moshafId,
+        audioUrl: url,
       );
-      final uri = Uri.tryParse(url);
-      if (uri == null || uri.scheme != 'https') throw const HttpException('Invalid audio URL');
-      final file = await _trackFile(reciterId, moshafId, surahNumber);
-      await file.parent.create(recursive: true);
-      final partial = File('${file.path}.part');
-      final client = http.Client();
-      try {
-        final request = http.Request('GET', uri);
-        final response = await client.send(request).timeout(const Duration(seconds: 15));
-        if (response.statusCode != 200) throw HttpException('HTTP ${response.statusCode}');
-        // Stream to disk rather than holding a full surah in memory. The
-        // atomic rename keeps interrupted files out of offline playback.
-        final sink = partial.openWrite();
-        try {
-          await response.stream.timeout(const Duration(seconds: 30))
-              .pipe(sink);
-        } finally {
-          await sink.close();
-        }
-        if (await partial.length() == 0) throw const HttpException('Empty audio');
-        if (await file.exists()) await file.delete();
-        await partial.rename(file.path);
-      } finally {
-        client.close();
-        if (await partial.exists()) await partial.delete();
-      }
-      messenger.showSnackBar(
-        SnackBar(content: Text('تم تنزيل التلاوة في الجهاز')),
-      );
+      messenger.showSnackBar(SnackBar(
+        content: Text(job.status == DownloadJobStatus.completed
+            ? 'التلاوة محفوظة على الجهاز'
+            : 'أُضيفت التلاوة إلى التنزيلات؛ يمكنك متابعة التقدم هناك.'),
+        action: SnackBarAction(label: 'التنزيلات',
+          onPressed: () => Navigator.of(context).pushNamed('/downloads')),
+      ));
     } catch (error) {
       messenger.showSnackBar(
         const SnackBar(content: Text('تعذّر تنزيل التلاوة. تحقق من الاتصال وحاول مجددًا.')),

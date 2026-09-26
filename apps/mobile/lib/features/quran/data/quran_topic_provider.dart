@@ -10,5 +10,8 @@ abstract class QuranTopicProvider {
 
   Future<bool> hasUpdatesSince(DateTime since);
 
+  /// A stable marker for a verified dataset, when the source provides one.
+  Future<String?> currentVersion() async => null;
+
   Future<List<QuranTopicRecord>> searchTopics(String query);
 }

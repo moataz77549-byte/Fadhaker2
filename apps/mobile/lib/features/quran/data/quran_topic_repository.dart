@@ -44,6 +44,22 @@ class QuranTopicRepository {
     if (DateTime.now().difference(lastUpdated) < const Duration(hours: 24)) {
       return;
     }
+    try {
+      final version = await _provider.currentVersion();
+      if (version != null) {
+        if (version != rows.first['source_version']) {
+          await _fullSync(db);
+        } else {
+          await db.update('topic_source',
+            {'last_updated': DateTime.now().millisecondsSinceEpoch},
+            where: 'source_id = ?', whereArgs: [_sourceId]);
+        }
+        return;
+      }
+    } catch (_) {
+      // Keep the last verified dataset if the manifest or download fails.
+      return;
+    }
     var changed = true;
     try {
       changed = await _provider.hasUpdatesSince(lastUpdated);

@@ -4,6 +4,7 @@ import 'package:flutter/rendering.dart';
 
 import '../data/surah_metadata.dart';
 import '../data/quran_reading_state_repository.dart';
+import '../data/qcf_page_font_loader.dart';
 import '../data/quran_topic_repository.dart';
 import '../domain/mushaf_page.dart';
 import '../domain/quran_topic.dart';
@@ -250,7 +251,11 @@ class _MadaniLayout extends StatelessWidget {
     }
     final numbers = lines.keys.toList()..sort();
 
-    return Column(
+    final hasGlyphs = usableWords.every((word) =>
+        word.charTypeName == 'end' || word.codeV2.isNotEmpty);
+    return FutureBuilder<String?>(
+      future: hasGlyphs ? QcfPageFontLoader.load(page.number) : Future.value(null),
+      builder: (context, font) => Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _SurahHeader(page: page, goldColor: goldColor, style: style),
@@ -274,9 +279,15 @@ class _MadaniLayout extends StatelessWidget {
                           if (ayah != null) onAyahPressed(ayah);
                         },
                         child: Text(
-                          word.textQpcHafs,
+                          font.data != null && word.charTypeName != 'end'
+                              ? QcfPageFontLoader.glyphs(word.codeV2)
+                              : word.textQpcHafs,
                           textDirection: TextDirection.rtl,
-                          style: style.copyWith(height: 1.75),
+                          style: style.copyWith(
+                            height: 1.75,
+                            fontFamily: font.data != null && word.charTypeName != 'end'
+                                ? font.data : style.fontFamily,
+                          ),
                         ),
                       ),
                     ),
@@ -285,6 +296,7 @@ class _MadaniLayout extends StatelessWidget {
             ),
           ),
       ],
+      ),
     );
   }
 }

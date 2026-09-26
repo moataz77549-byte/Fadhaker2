@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../data/quran_api_repository.dart';
+import '../data/mushaf_repository.dart';
 import '../data/quran_topic_repository.dart';
 import '../domain/quran_search_result.dart';
 import '../domain/quran_topic.dart';
@@ -16,10 +17,12 @@ class QuranSearchSheet extends StatefulWidget {
   const QuranSearchSheet({
     super.key,
     required this.api,
+    required this.mushafRepository,
     required this.topicRepository,
   });
 
   final QuranApiRepository api;
+  final MushafRepository mushafRepository;
   final QuranTopicRepository topicRepository;
 
   @override
@@ -52,7 +55,11 @@ class _QuranSearchSheetState extends State<QuranSearchSheet> {
     try {
       quran = await widget.api.searchQuran(query);
     } catch (_) {
-      // Search API may be temporarily unavailable; topic/offline results remain.
+      try {
+        quran = await widget.mushafRepository.searchCachedText(query);
+      } catch (_) {
+        // Topic search and exact-verse navigation remain available.
+      }
     }
     try {
       topics = await widget.topicRepository.searchTopics(query);
@@ -144,8 +151,7 @@ class _QuranSearchSheetState extends State<QuranSearchSheet> {
                               if (data.quran.isNotEmpty) ...[
                                 const _SectionHeader(
                                   title: 'نص القرآن والتنقل',
-                                  subtitle:
-                                      'مطابقة نصية/تنقل من Quran Foundation',
+                                  subtitle: 'مطابقة نصية أو تنقل؛ تُذكر الصفحات المحفوظة عند البحث دون اتصال',
                                 ),
                                 for (final result in data.quran)
                                   ListTile(
