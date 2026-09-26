@@ -151,7 +151,27 @@ class _MushafReaderScreenState extends ConsumerState<MushafReaderScreen>
     WidgetsBinding.instance.removeObserver(this);
     final init = _activeInit;
     if (init != null) {
-      unawaited(_persistProgress(init, _currentPage));
+      final key = _currentVerseKey;
+      if (key != null) {
+        try {
+          final parsed = QuranNavigation.parseAyahKey(key);
+          unawaited(
+            _stateRepo.saveLastLocation(
+              init.riwaya.id,
+              QuranLocation(
+                pageNumber: _currentPage,
+                surahNumber: parsed.chapter,
+                ayahNumber: parsed.verse,
+                verseKey: key,
+              ),
+            ),
+          );
+        } catch (_) {
+          unawaited(_stateRepo.saveLastPage(init.riwaya.id, _currentPage));
+        }
+      } else {
+        unawaited(_stateRepo.saveLastPage(init.riwaya.id, _currentPage));
+      }
     }
     _controller?.dispose();
     _configRepo.dispose();
