@@ -18,7 +18,7 @@ class Mp3QuranApi {
     final uri = Uri.parse('$baseUrl/$path?language=ar');
     final response = await _client.get(uri).timeout(const Duration(seconds: 8));
     if (response.statusCode != 200) throw http.ClientException('Catalog HTTP ${response.statusCode}');
-    final data = jsonDecode(response.body);
+    final data = jsonDecode(utf8.decode(response.bodyBytes));
     if (data is! Map || data[key] is! List) throw const FormatException('Malformed MP3Quran catalog');
     return (data[key] as List).whereType<Map>()
         .map((row) => Map<String, dynamic>.from(row)).toList(growable: false);
