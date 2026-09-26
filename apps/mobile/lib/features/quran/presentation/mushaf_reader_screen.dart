@@ -1,12 +1,8 @@
-import 'dart:async';
-
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 
-import '../../../core/services/audio_playback_service.dart';
 import '../../home/data/reading_progress_repository.dart';
 import '../data/mushaf_bookmark_repository.dart';
 import '../data/mushaf_repository.dart';
@@ -14,20 +10,15 @@ import '../data/quran_api_repository.dart';
 import '../data/quran_config_repository.dart';
 import '../data/quran_font_loader.dart';
 import '../data/quran_reading_state_repository.dart';
-import '../data/quran_topic_repository.dart';
 import '../data/tafsir_cache_repository.dart';
 import '../domain/mushaf_edition.dart';
-import '../domain/quran_audio.dart';
 import '../domain/mushaf_page.dart';
 import '../domain/quran_font.dart';
 import '../domain/quran_navigation.dart';
-import '../domain/quran_location.dart';
 import '../domain/riwaya.dart';
 import '../domain/tafsir_source.dart';
 import '../../../core/widgets/skeleton.dart';
-import 'quran_search_sheet.dart';
 import 'quran_settings_sheet.dart';
-import 'quran_unified_page_view.dart';
 import 'quran_translation_sheet.dart';
 
 /// شاشة المصحف: وضع مصوّر (صور الصفحات) ووضع نص.
@@ -43,44 +34,33 @@ import 'quran_translation_sheet.dart';
 /// - http + path_provider (تحميل ملفات الخطوط عند أول استخدام وتخزينها —
 ///   راجع data/quran_font_loader.dart)
 /// - share_plus (مشاركة الآيات)
-class MushafReaderScreen extends ConsumerStatefulWidget {
-  const MushafReaderScreen({super.key, this.initialPage = 293, this.initialRiwayaId});
+class MushafReaderScreen extends StatefulWidget {
+  const MushafReaderScreen({super.key, this.initialPage = 293, this.initialRiwayaId,
+    this.initialVerseKey});
   final int initialPage;
   final String? initialRiwayaId;
+  final String? initialVerseKey;
 
   @override
-  ConsumerState<MushafReaderScreen> createState() => _MushafReaderScreenState();
+  State<MushafReaderScreen> createState() => _MushafReaderScreenState();
 }
 
-class _MushafReaderScreenState extends ConsumerState<MushafReaderScreen>
-    with WidgetsBindingObserver {
+class _MushafReaderScreenState extends State<MushafReaderScreen> with WidgetsBindingObserver {
   final _configRepo = QuranConfigRepository();
   final _apiRepo = QuranApiRepository();
   final _mushafRepo = MushafRepository();
   final _stateRepo = QuranReadingStateRepository();
   final _progressRepo = ReadingProgressRepository();
   final _bookmarkRepo = MushafBookmarkRepository();
-  final _topicRepo = QuranTopicRepository();
-
-  // مسارات رجوع مؤقتة خلال فترة التحقق. لا تُفعّل في الإنتاج افتراضيًا.
-  static const _legacyImageRenderer = bool.fromEnvironment(
-    'QURAN_LEGACY_IMAGE_RENDERER',
-    defaultValue: false,
-  );
-  static const _legacyTextRenderer = bool.fromEnvironment(
-    'QURAN_LEGACY_TEXT_RENDERER',
-    defaultValue: false,
-  );
 
   late Future<_ReaderInit> _initFuture;
   PageController? _controller;
   final Map<int, Future<MushafPage>> _textPages = {};
-  List<QuranRecitation>? _recitations;
-  _ReaderInit? _activeInit;
+  Future<void>? _topicSync;
 
   int _currentPage = 1;
-  String? _currentVerseKey;
   bool _dark = false;
+  String? _currentVerseKey;
 
   @override
   void initState() {
@@ -91,13 +71,9 @@ class _MushafReaderScreenState extends ConsumerState<MushafReaderScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.inactive ||
-        state == AppLifecycleState.paused ||
-        state == AppLifecycleState.detached) {
-      final init = _activeInit;
-      if (init != null) {
-        unawaited(_persistProgress(init, _currentPage));
-      }
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
+      _stateRepo.riwayaId().then((id) => _stateRepo.saveLocation(id,
+        QuranLocation(page: _currentPage, verseKey: _currentVerseKey)));
     }
   }
 
@@ -116,7 +92,7 @@ class _MushafReaderScreenState extends ConsumerState<MushafReaderScreen>
     final fontSize = await _stateRepo.fontSize();
     // الخط يُحمَّل عند أول استخدام ويُخزَّن على القرص؛ null = خط النظام.
     final loadedFontFamily = await QuranFontLoader.ensureLoaded(font);
-    // إصدار المصحف المصوّر (عادي/تجويد ملوّن) — يجب أن يتبع الرواية المختارة.
+    // The two image modes retain their existing verified page sources.
     final riwayaEditions = MushafEditionRegistry.forRiwaya(riwaya.id, config.editions);
     MushafEdition? edition;
     if (riwayaEditions.isNotEmpty) {
@@ -125,15 +101,28 @@ class _MushafReaderScreenState extends ConsumerState<MushafReaderScreen>
       edition = match.isNotEmpty ? match.first : riwayaEditions.first;
       if (!edition.supportsPages) edition = null;
     }
-    final mode = await _stateRepo.readingMode();
-    final savedLocation = await _stateRepo.lastLocation(riwaya.id);
-    final savedPage = savedLocation?.pageNumber ?? await _stateRepo.lastPage(riwaya.id);
-    var page = savedPage ?? widget.initialPage;
-    page = page.clamp(1, QuranNavigation.quranFoundationTextPages);
+    var mode = await _stateRepo.readingMode();
+    if (mode == QuranReadingMode.tajweed) {
+      final tajweed = riwayaEditions.where((e) => e.id == 'hafs-madani-tajweed' && e.supportsPages);
+      edition = tajweed.isEmpty ? null : tajweed.first;
+    } else if (mode == QuranReadingMode.image) {
+      final madani = riwayaEditions.where((e) => e.id == 'hafs-madani' && e.supportsPages);
+      edition = madani.isEmpty ? null : madani.first;
+    }
+    if ((mode == QuranReadingMode.image || mode == QuranReadingMode.tajweed) && edition == null) {
+      mode = QuranReadingMode.text;
+    }
+    final location = await _stateRepo.lastLocation(riwaya.id);
+    var page = widget.initialVerseKey == null ?
+        (location?.page ?? widget.initialPage) : widget.initialPage;
+    _currentVerseKey = widget.initialVerseKey ?? location?.verseKey;
+    final maxPage = mode == QuranReadingMode.image || mode == QuranReadingMode.tajweed
+        ? (edition?.totalPages ?? QuranNavigation.quranFoundationTextPages)
+        : QuranNavigation.quranFoundationTextPages;
+    page = page.clamp(1, maxPage);
     _currentPage = page;
-    _currentVerseKey = savedLocation?.verseKey;
     _controller = PageController(initialPage: QuranNavigation.pageToIndex(page));
-    final result = _ReaderInit(
+    return _ReaderInit(
       config: config,
       riwaya: riwaya,
       edition: edition,
@@ -142,42 +131,15 @@ class _MushafReaderScreenState extends ConsumerState<MushafReaderScreen>
       fontSize: fontSize,
       mode: mode,
     );
-    _activeInit = result;
-    return result;
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    final init = _activeInit;
-    if (init != null) {
-      final key = _currentVerseKey;
-      if (key != null) {
-        try {
-          final parsed = QuranNavigation.parseAyahKey(key);
-          unawaited(
-            _stateRepo.saveLastLocation(
-              init.riwaya.id,
-              QuranLocation(
-                pageNumber: _currentPage,
-                surahNumber: parsed.chapter,
-                ayahNumber: parsed.verse,
-                verseKey: key,
-              ),
-            ),
-          );
-        } catch (_) {
-          unawaited(_stateRepo.saveLastPage(init.riwaya.id, _currentPage));
-        }
-      } else {
-        unawaited(_stateRepo.saveLastPage(init.riwaya.id, _currentPage));
-      }
-    }
     _controller?.dispose();
     _configRepo.dispose();
     _apiRepo.dispose();
     _mushafRepo.dispose();
-    unawaited(_topicRepo.dispose());
     super.dispose();
   }
 
@@ -192,87 +154,63 @@ class _MushafReaderScreenState extends ConsumerState<MushafReaderScreen>
   Future<MushafPage> _loadTextPage(_ReaderInit init, int page) =>
       _textPages.putIfAbsent(page, () => _mushafRepo.page(riwaya: init.riwaya, page: page));
 
-  void _retryTextPage(int page) => setState(() => _textPages.remove(page));
-
-  void _prefetchAdjacent(_ReaderInit init, int page) {
-    _textPages.removeWhere((cachedPage, _) => (cachedPage - page).abs() > 2);
-    for (final candidate in [page - 1, page + 1]) {
-      if (candidate >= 1 && candidate <= QuranNavigation.quranFoundationTextPages) {
-        unawaited(_loadTextPage(init, candidate));
-      }
-    }
-  }
-
-  Future<void> _openVerseKey(_ReaderInit init, String verseKey) async {
+  Future<Map<String, List<QuranTopic>>> _loadTopics(MushafPage page) async {
     try {
-      final parsed = QuranNavigation.parseAyahKey(verseKey);
-      final page = await _apiRepo.lookupPage(
-        chapter: parsed.chapter,
-        verse: parsed.verse,
-      );
-      if (!mounted) return;
-      setState(() => _currentVerseKey = verseKey);
-      await _jumpToPage(init, page);
-      await _persistProgress(init, page);
+      await (_topicSync ??= _mushafRepo.refreshTopicsIfNeeded());
     } catch (_) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تعذّر الانتقال إلى الآية المطلوبة')),
-        );
-      }
+      _topicSync = Future<void>.value(); // Retain offline catalog; no network loop.
     }
+    return _mushafRepo.topicsForPage(page);
   }
+
+  void _retryTextPage(int page) => setState(() => _textPages.remove(page));
 
   void _onPageChanged(_ReaderInit init, int index) {
     final page = QuranNavigation.indexToPage(index);
-    setState(() {
-      _currentPage = page;
-      _currentVerseKey = null;
-    });
-    _prefetchAdjacent(init, page);
-    unawaited(_persistProgress(init, page));
+    setState(() => _currentPage = page);
+    _persistProgress(init, page);
   }
 
   Future<void> _persistProgress(_ReaderInit init, int page) async {
     try {
-      final pageData = await _loadTextPage(init, page);
-      MushafAyah? current;
-      final wanted = _currentVerseKey;
-      if (wanted != null) {
-        for (final ayah in pageData.ayahs) {
-          if (ayah.key == wanted) {
-            current = ayah;
-            break;
+      if (page != _currentPage) return;
+      await _stateRepo.saveLastPage(init.riwaya.id, page);
+      String? surahName;
+      int? surahNumber;
+      String? ayahKey;
+      if (page == _currentPage) {
+        try {
+          final pageData = await _loadTextPage(init, page);
+          surahName = pageData.surahName;
+          if (pageData.ayahs.isNotEmpty) {
+            final first = pageData.ayahs.first;
+            surahNumber = first.chapterId;
+            ayahKey = first.key.isNotEmpty ? first.key : null;
+            if (_currentVerseKey == null || _currentVerseKey != ayahKey) {
+              _currentVerseKey = ayahKey;
+            }
           }
-        }
+        } catch (_) {/* best-effort */}
       }
-      current ??= pageData.ayahs.isEmpty ? null : pageData.ayahs.first;
-      if (current != null) {
-        final location = QuranLocation(
-          pageNumber: page,
-          surahNumber: current.chapterId,
-          ayahNumber: current.number,
-          verseKey: current.key,
-        );
-        await _stateRepo.saveLastLocation(init.riwaya.id, location);
-      } else {
-        await _stateRepo.saveLastPage(init.riwaya.id, page);
-      }
+      await _stateRepo.saveLocation(init.riwaya.id,
+          QuranLocation(page: page, verseKey: _currentVerseKey));
       await _progressRepo.save(
         page: page,
-        surahName: pageData.surahName,
-        surahNumber: current?.chapterId,
-        ayahKey: current?.key,
+        surahName: surahName,
+        surahNumber: surahNumber,
+        ayahKey: ayahKey,
         riwayaId: init.riwaya.id,
       );
     } catch (_) {
-      // القراءة لا تتعطل بسبب فشل حفظ الموضع.
-      await _stateRepo.saveLastPage(init.riwaya.id, page);
+      // تجاهل هادئ: لا نعطّل القراءة بسبب فشل الحفظ.
     }
   }
 
   Future<void> _jumpToPage(_ReaderInit init, int page) async {
-    final target = page.clamp(1, QuranNavigation.quranFoundationTextPages);
+    final max = init.mode == QuranReadingMode.image || init.mode == QuranReadingMode.tajweed
+        ? (init.edition?.totalPages ?? QuranNavigation.quranFoundationTextPages)
+        : QuranNavigation.quranFoundationTextPages;
+    final target = page.clamp(1, max);
     await _controller?.animateToPage(
       QuranNavigation.pageToIndex(target),
       duration: const Duration(milliseconds: 300),
@@ -304,180 +242,67 @@ class _MushafReaderScreenState extends ConsumerState<MushafReaderScreen>
   }
 
   Future<void> _openGotoAyah(_ReaderInit init) async {
-    final selection = await showModalBottomSheet<QuranSearchSelection>(
+    final surahCtrl = TextEditingController();
+    final ayahCtrl = TextEditingController();
+    final result = await showDialog<({int chapter, int verse})>(
       context: context,
-      isScrollControlled: true,
-      showDragHandle: true,
-      builder: (_) => QuranSearchSheet(
-        api: _apiRepo,
-        topicRepository: _topicRepo,
-      ),
-    );
-    if (selection == null || !mounted) return;
-    try {
-      var page = selection.pageNumber;
-      final key = selection.verseKey;
-      if (page == null && key != null) {
-        final parsed = QuranNavigation.parseAyahKey(key);
-        page = await _apiRepo.lookupPage(
-          chapter: parsed.chapter,
-          verse: parsed.verse,
-        );
-      }
-      if (page == null) return;
-      setState(() => _currentVerseKey = key);
-      await _jumpToPage(init, page);
-      await _persistProgress(init, page);
-    } catch (_) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تعذّر تحديد موضع نتيجة البحث')),
-        );
-      }
-    }
-  }
-
-  Future<QuranRecitation?> _resolveRecitation({
-    bool forcePicker = false,
-  }) async {
-    var recitations = _recitations;
-    if (recitations == null) {
-      try {
-        recitations = await _apiRepo.recitations();
-        _recitations = recitations;
-      } catch (_) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('تعذّر تحميل قائمة القراء الآن')),
-          );
-        }
-        return null;
-      }
-    }
-    if (recitations.isEmpty) return null;
-
-    final saved = await _stateRepo.preferredReciter();
-    final savedId = saved != null && saved.startsWith('qf:')
-        ? int.tryParse(saved.substring(3))
-        : null;
-    if (!forcePicker && savedId != null) {
-      for (final item in recitations) {
-        if (item.id == savedId) return item;
-      }
-    }
-
-    if (!mounted) return null;
-    final picked = await showModalBottomSheet<QuranRecitation>(
-      context: context,
-      isScrollControlled: true,
-      showDragHandle: true,
-      builder: (context) => SafeArea(
-        child: DraggableScrollableSheet(
-          expand: false,
-          initialChildSize: 0.7,
-          minChildSize: 0.4,
-          maxChildSize: 0.9,
-          builder: (context, controller) => Column(
-            children: [
-              const Text(
-                'اختر قارئًا للآيات',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 6),
-              const Text(
-                'القائمة من Quran Foundation — تلاوات آية بآية',
-                style: TextStyle(fontSize: 11, color: Colors.grey),
-              ),
-              const Divider(),
-              Expanded(
-                child: ListView.builder(
-                  controller: controller,
-                  itemCount: recitations!.length,
-                  itemBuilder: (context, index) {
-                    final item = recitations![index];
-                    return ListTile(
-                      leading: const Icon(Icons.record_voice_over_outlined),
-                      title: Text(item.nameAr),
-                      subtitle: item.style == null ? null : Text(item.style!),
-                      trailing: item.id == savedId
-                          ? const Icon(Icons.check_circle_outline)
-                          : null,
-                      onTap: () => Navigator.pop(context, item),
-                    );
-                  },
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-    if (picked != null) {
-      await _stateRepo.savePreferredReciter('qf:${picked.id}');
-    }
-    return picked;
-  }
-
-  Future<void> _playAyahAudio(
-    _ReaderInit init,
-    MushafAyah ayah, {
-    bool fromHere = false,
-    bool chooseReciter = false,
-  }) async {
-    final recitation =
-        await _resolveRecitation(forcePicker: chooseReciter);
-    if (recitation == null || !mounted) return;
-
-    try {
-      final page = await _loadTextPage(init, _currentPage);
-      final title = 'سورة ${page.surahName} • الآية ${ayah.key}';
-      final player = ref.read(audioPlaybackProvider.notifier);
-      if (fromHere) {
-        final queue = await _apiRepo.audioFromAyah(
-          verseKey: ayah.key,
-          recitationId: recitation.id,
-        );
-        if (queue.isEmpty) throw StateError('Empty Quran audio queue');
-        await player.playQuranQueue(
-          'سورة ${page.surahName} • من الآية ${ayah.key}',
-          recitation.nameAr,
-          queue.map((item) => item.audioUrl).toList(growable: false),
-        );
-      } else {
-        final audio = await _apiRepo.ayahAudio(
-          verseKey: ayah.key,
-          recitationId: recitation.id,
-        );
-        await player.playQuranTrack(
-          title,
-          recitation.nameAr,
-          audio.audioUrl,
-          duration: audio.duration,
-        );
-      }
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              fromHere
-                  ? 'بدأ التشغيل من الآية ${ayah.key}'
-                  : 'بدأ تشغيل الآية ${ayah.key}',
+      builder: (context) => AlertDialog(
+        title: const Text('الانتقال إلى آية'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: surahCtrl,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(labelText: 'رقم السورة (1-114)'),
             ),
+            TextField(
+              controller: ayahCtrl,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(labelText: 'رقم الآية'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('إلغاء')),
+          FilledButton(
+            onPressed: () {
+              try {
+                final chapter = int.parse(surahCtrl.text.trim());
+                final verse = int.parse(ayahCtrl.text.trim());
+                final parsed = QuranNavigation.parseAyahKey('$chapter:$verse');
+                Navigator.pop(context, parsed);
+              } catch (_) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('تحقق من رقمي السورة والآية')),
+                );
+              }
+            },
+            child: const Text('انتقال'),
           ),
-        );
-      }
+        ],
+      ),
+    );
+    if (result == null || !mounted) return;
+    try {
+      final page = await _apiRepo.lookupPage(chapter: result.chapter, verse: result.verse);
+      _currentVerseKey = '${result.chapter}:${result.verse}';
+      await _stateRepo.saveLocation(init.riwaya.id,
+          QuranLocation(page: page, verseKey: _currentVerseKey));
+      await _jumpToPage(init, page);
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تعذّر تشغيل التلاوة الآن')),
+          const SnackBar(content: Text('تعذّر تحديد صفحة الآية')),
         );
       }
     }
   }
 
   Future<void> _showAyahActions(_ReaderInit init, MushafAyah ayah) async {
-    setState(() => _currentVerseKey = ayah.key);
-    unawaited(_persistProgress(init, _currentPage));
+    _currentVerseKey = ayah.key;
+    await _stateRepo.saveLocation(init.riwaya.id,
+        QuranLocation(page: _currentPage, verseKey: ayah.key));
     final label = '﴿${ayah.text}﴾ [${ayah.key}]';
     await showModalBottomSheet<void>(
       context: context,
@@ -485,28 +310,11 @@ class _MushafReaderScreenState extends ConsumerState<MushafReaderScreen>
       builder: (context) => SafeArea(
         child: Wrap(children: [
           ListTile(
-            leading: const Icon(Icons.play_circle_outline),
-            title: const Text('تشغيل هذه الآية'),
+            leading: const Icon(Icons.topic_outlined),
+            title: const Text('موضوعات الآية'),
             onTap: () {
               Navigator.pop(context);
-              unawaited(_playAyahAudio(init, ayah));
-            },
-          ),
-          ListTile(
-            leading: const Icon(Icons.playlist_play_outlined),
-            title: const Text('تشغيل من هذه الآية'),
-            subtitle: const Text('حتى نهاية السورة بالتلاوة آيةً آية'),
-            onTap: () {
-              Navigator.pop(context);
-              unawaited(_playAyahAudio(init, ayah, fromHere: true));
-            },
-          ),
-          ListTile(
-            leading: const Icon(Icons.record_voice_over_outlined),
-            title: const Text('اختيار قارئ وتشغيل الآية'),
-            onTap: () {
-              Navigator.pop(context);
-              unawaited(_playAyahAudio(init, ayah, chooseReciter: true));
+              _showTopicDetails(init, ayah.key);
             },
           ),
           ListTile(
@@ -577,6 +385,80 @@ class _MushafReaderScreenState extends ConsumerState<MushafReaderScreen>
     );
   }
 
+  Future<void> _showTopicDetails(_ReaderInit init, String verseKey) async {
+    final topics = await _mushafRepo.topicsForVerse(verseKey);
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Text('موضوعات الآية $verseKey', style: Theme.of(sheetContext).textTheme.titleLarge),
+          const SizedBox(height: 8),
+          const Text('تصنيف فهرسي من الموسوعة القرآنية، وليس جزءًا من نص المصحف.'),
+          if (topics.isEmpty) const Text('لا توجد موضوعات محفوظة لهذه الآية.'),
+          for (final topic in topics) ListTile(
+            title: Text(topic.title),
+            subtitle: const Text('الموسوعة القرآنية Quranpedia.net'),
+            trailing: const Icon(Icons.arrow_back),
+            onTap: () async {
+              final keys = await _mushafRepo.versesForTopic(topic.id);
+              if (!sheetContext.mounted) return;
+              Navigator.pop(sheetContext);
+              if (!mounted) return;
+              await showModalBottomSheet<void>(context: context,
+                builder: (context) => SafeArea(child: ListView(
+                  children: [
+                    ListTile(title: Text(topic.title), subtitle: Text('${keys.length} آيات مرتبطة')),
+                    for (final key in keys.take(100)) ListTile(title: Text(key), onTap: () async {
+                      Navigator.pop(context);
+                      final parsed = QuranNavigation.parseAyahKey(key);
+                      final page = await _apiRepo.lookupPage(chapter: parsed.chapter, verse: parsed.verse);
+                      _currentVerseKey = key;
+                      await _jumpToPage(init, page);
+                    }),
+                  ],
+                )));
+            },
+          ),
+        ]),
+      )),
+    );
+  }
+
+  Future<void> _searchTopics(_ReaderInit init) async {
+    final controller = TextEditingController();
+    await showModalBottomSheet<void>(context: context, isScrollControlled: true,
+      showDragHandle: true, builder: (sheetContext) => SafeArea(child: Padding(
+        padding: EdgeInsets.fromLTRB(16, 8, 16, MediaQuery.viewInsetsOf(sheetContext).bottom + 16),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          TextField(controller: controller, autofocus: true,
+            decoration: const InputDecoration(labelText: 'بحث في الموضوعات', prefixIcon: Icon(Icons.search))),
+          SizedBox(height: 300, child: ValueListenableBuilder<TextEditingValue>(
+              valueListenable: controller, builder: (context, value, _) {
+            return FutureBuilder<List<QuranTopic>>(
+              future: _mushafRepo.searchTopics(value.text),
+              builder: (context, snapshot) => ListView(children: [
+                for (final topic in snapshot.data ?? const <QuranTopic>[])
+                  ListTile(title: Text(topic.title), onTap: () async {
+                    final keys = await _mushafRepo.versesForTopic(topic.id);
+                    if (!sheetContext.mounted || keys.isEmpty) return;
+                    Navigator.pop(sheetContext);
+                    final parsed = QuranNavigation.parseAyahKey(keys.first);
+                    final page = await _apiRepo.lookupPage(chapter: parsed.chapter, verse: parsed.verse);
+                    _currentVerseKey = keys.first;
+                    await _jumpToPage(init, page);
+                  }),
+              ]),
+            );
+          })),
+        ]),
+      )));
+    controller.dispose();
+  }
+
   Future<void> _openTafsirSheet(_ReaderInit init, MushafAyah ayah) async {
     final sourceId = await _stateRepo.tafsirSourceId();
     if (!mounted) return;
@@ -620,6 +502,7 @@ class _MushafReaderScreenState extends ConsumerState<MushafReaderScreen>
         builder: (_) => MushafReaderScreen(
           initialPage: page,
           initialRiwayaId: bookmark.riwayaId,
+          initialVerseKey: bookmark.ayahKey,
         ),
       ),
     );
@@ -651,7 +534,9 @@ class _MushafReaderScreenState extends ConsumerState<MushafReaderScreen>
           );
         }
         final palette = _dark ? const _ReaderPalette.dark() : const _ReaderPalette.sepia();
-        const maxPage = QuranNavigation.quranFoundationTextPages;
+        final maxPage = init.mode == QuranReadingMode.image || init.mode == QuranReadingMode.tajweed
+            ? (init.edition?.totalPages ?? QuranNavigation.quranFoundationTextPages)
+            : QuranNavigation.quranFoundationTextPages;
         return Theme(
           data: Theme.of(context).copyWith(scaffoldBackgroundColor: palette.canvas),
           child: Scaffold(
@@ -665,50 +550,28 @@ class _MushafReaderScreenState extends ConsumerState<MushafReaderScreen>
                   onRiwayaPressed: () => _openSettings(init),
                 ),
                 Expanded(
-                  child: _legacyImageRenderer &&
-                          init.mode == QuranReadingMode.madani &&
-                          init.edition != null
+                  child: init.mode == QuranReadingMode.image || init.mode == QuranReadingMode.tajweed
                       ? _ImagePageView(
-                          key: ValueKey('legacy-image-${init.riwaya.id}-${init.edition?.id}'),
+                          key: ValueKey('image-${init.riwaya.id}-${init.edition?.id}'),
                           controller: _controller!,
                           edition: init.edition,
                           riwayaName: init.riwaya.nameAr,
                           palette: palette,
                           onPageChanged: (i) => _onPageChanged(init, i),
                         )
-                      : _legacyTextRenderer
-                          ? _TextPageView(
-                              key: ValueKey('legacy-text-${init.riwaya.id}'),
-                              controller: _controller!,
-                              init: init,
-                              palette: palette,
-                              tajweed: init.mode == QuranReadingMode.tajweed,
-                              loadPage: (p) => _loadTextPage(init, p),
-                              onPageChanged: (i) => _onPageChanged(init, i),
-                              onRetry: _retryTextPage,
-                              onAyahPressed: (a) => _showAyahActions(init, a),
-                            )
-                          : QuranUnifiedPageView(
-                              key: ValueKey(
-                                'unified-${init.riwaya.id}-${init.mode.name}',
-                              ),
-                              controller: _controller!,
-                              mode: init.mode,
-                              dark: _dark,
-                              pageColor: palette.page,
-                              inkColor: palette.ink,
-                              goldColor: palette.gold,
-                              mutedColor: palette.muted,
-                              fontFamily: init.loadedFontFamily,
-                              fontSize: init.fontSize,
-                              lineHeight: init.font.lineHeight,
-                              loadPage: (p) => _loadTextPage(init, p),
-                              onPageChanged: (i) => _onPageChanged(init, i),
-                              onRetry: _retryTextPage,
-                              onAyahPressed: (a) => _showAyahActions(init, a),
-                              onVerseKeyRequested: (key) => _openVerseKey(init, key),
-                              topicRepository: _topicRepo,
-                            ),
+                      : _TextPageView(
+                          key: ValueKey('text-${init.riwaya.id}'),
+                          controller: _controller!,
+                          init: init,
+                          palette: palette,
+                          thematic: init.mode == QuranReadingMode.thematic,
+                          loadPage: (p) => _loadTextPage(init, p),
+                          loadTopics: _loadTopics,
+                          onPageChanged: (i) => _onPageChanged(init, i),
+                          onRetry: _retryTextPage,
+                          onAyahPressed: (a) => _showAyahActions(init, a),
+                          onTopicPressed: (key) => _showTopicDetails(init, key),
+                        ),
                 ),
                 _ReaderControls(
                   page: _currentPage,
@@ -717,7 +580,8 @@ class _MushafReaderScreenState extends ConsumerState<MushafReaderScreen>
                   dark: _dark,
                   onPageChanged: (p) => _jumpToPage(init, p),
                   onModeChanged: (m) async {
-                    await _persistProgress(init, _currentPage);
+                    await _stateRepo.saveLocation(init.riwaya.id,
+                        QuranLocation(page: _currentPage, verseKey: _currentVerseKey));
                     await _stateRepo.saveReadingMode(m);
                     if (mounted) {
                       setState(() {
@@ -729,6 +593,7 @@ class _MushafReaderScreenState extends ConsumerState<MushafReaderScreen>
                     }
                   },
                   onDarkChanged: () => setState(() => _dark = !_dark),
+                  onTopicSearchPressed: () => _searchTopics(init),
                   onSettingsPressed: () => _openSettings(init),
                   onGotoPressed: () => _openGotoAyah(init),
                   onBookmarksPressed: () => _openBookmarks(init),
@@ -847,21 +712,25 @@ class _TextPageView extends StatelessWidget {
     required this.controller,
     required this.init,
     required this.palette,
-    required this.tajweed,
+    required this.thematic,
     required this.loadPage,
+    required this.loadTopics,
     required this.onPageChanged,
     required this.onRetry,
     required this.onAyahPressed,
+    required this.onTopicPressed,
   });
 
   final PageController controller;
   final _ReaderInit init;
   final _ReaderPalette palette;
-  final bool tajweed;
+  final bool thematic;
   final Future<MushafPage> Function(int page) loadPage;
+  final Future<Map<String, List<QuranTopic>>> Function(MushafPage page) loadTopics;
   final ValueChanged<int> onPageChanged;
   final ValueChanged<int> onRetry;
   final ValueChanged<MushafAyah> onAyahPressed;
+  final ValueChanged<String> onTopicPressed;
 
   @override
   Widget build(BuildContext context) {
@@ -888,7 +757,11 @@ class _TextPageView extends StatelessWidget {
                 ),
               );
             }
-            return LayoutBuilder(
+            return FutureBuilder<Map<String, List<QuranTopic>>>(
+              future: thematic ? loadTopics(data) : null,
+              builder: (context, topicsSnapshot) {
+                final topics = topicsSnapshot.data ?? const <String, List<QuranTopic>>{};
+                return LayoutBuilder(
               builder: (context, constraints) => SingleChildScrollView(
                 padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
                 child: Center(
@@ -913,10 +786,16 @@ class _TextPageView extends StatelessWidget {
                             (ayah) => InkWell(
                               onTap: () => onAyahPressed(ayah),
                               onLongPress: () => onAyahPressed(ayah),
-                              child: Padding(
+                              child: Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 3),
+                                decoration: thematic && (topics[ayah.key]?.isNotEmpty ?? false)
+                                    ? BoxDecoration(
+                                        color: (Theme.of(context).brightness == Brightness.dark
+                                            ? Colors.teal.shade900 : Colors.teal.shade50),
+                                        border: Border(bottom: BorderSide(color: Colors.teal.shade400, width: 2)),
+                                      ) : null,
                                 child: Text(
-                                  '${_clean(tajweed ? ayah.tajweedText : ayah.text)} ﴿${_arabicNumber(ayah.number)}﴾',
+                                  '${ayah.text} ﴿${_arabicNumber(ayah.number)}﴾',
                                   textAlign: TextAlign.center,
                                   textDirection: TextDirection.rtl,
                                   style: TextStyle(
@@ -933,12 +812,26 @@ class _TextPageView extends StatelessWidget {
                               ),
                             ),
                           ),
+                          if (thematic && topics.isNotEmpty)
+                            TextButton.icon(
+                              onPressed: () {
+                                final first = data.ayahs.firstWhere(
+                                  (ayah) => topics[ayah.key]?.isNotEmpty ?? false,
+                                  orElse: () => data.ayahs.first,
+                                );
+                                onTopicPressed(first.key);
+                              },
+                              icon: const Icon(Icons.info_outline),
+                              label: const Text('دليل الموضوعات ومصدرها'),
+                            ),
                         ],
                       ),
                     ),
                   ),
                 ),
               ),
+            );
+              },
             );
           },
         );
@@ -977,8 +870,6 @@ class _TextPageView extends StatelessWidget {
     }
     return widgets;
   }
-
-  static String _clean(String input) => input.replaceAll(RegExp(r'<[^>]+>'), '');
 
   static String _arabicNumber(int value) =>
       value.toString().split('').map((d) => '٠١٢٣٤٥٦٧٨٩'[int.parse(d)]).join();
@@ -1067,6 +958,7 @@ class _ReaderControls extends StatelessWidget {
     required this.onPageChanged,
     required this.onModeChanged,
     required this.onDarkChanged,
+    required this.onTopicSearchPressed,
     required this.onSettingsPressed,
     required this.onGotoPressed,
     required this.onBookmarksPressed,
@@ -1079,6 +971,7 @@ class _ReaderControls extends StatelessWidget {
   final ValueChanged<int> onPageChanged;
   final ValueChanged<QuranReadingMode> onModeChanged;
   final VoidCallback onDarkChanged;
+  final VoidCallback onTopicSearchPressed;
   final VoidCallback onSettingsPressed;
   final VoidCallback onGotoPressed;
   final VoidCallback onBookmarksPressed;
@@ -1098,71 +991,47 @@ class _ReaderControls extends StatelessWidget {
             label: '$page',
             onChanged: (value) => onPageChanged(value.round()),
           ),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              IconButton(
-                tooltip: 'الوضع الليلي',
-                onPressed: onDarkChanged,
-                icon: Icon(dark ? Icons.light_mode : Icons.dark_mode),
-              ),
-              IconButton(
-                tooltip: 'الفواصل',
-                onPressed: onBookmarksPressed,
-                icon: const Icon(Icons.bookmarks_outlined),
-              ),
-              IconButton(
-                tooltip: 'البحث والتنقل',
-                onPressed: onGotoPressed,
-                icon: const Icon(Icons.search),
-              ),
-              PopupMenuButton<QuranReadingMode>(
-                tooltip: 'نوع عرض المصحف',
-                initialValue: mode,
-                onSelected: onModeChanged,
-                itemBuilder: (context) => [
-                  for (final value in QuranReadingMode.values)
-                    PopupMenuItem(
-                      value: value,
-                      child: Row(
-                        children: [
-                          Icon(_modeIcon(value), size: 19),
-                          const SizedBox(width: 10),
-                          Text(_modeLabel(value)),
-                        ],
-                      ),
-                    ),
-                ],
-                child: Chip(
-                  avatar: Icon(_modeIcon(mode), size: 17),
-                  label: Text(_modeLabel(mode)),
-                ),
-              ),
-              IconButton(
-                tooltip: 'الإعدادات',
-                onPressed: onSettingsPressed,
-                icon: const Icon(Icons.settings_outlined),
-              ),
-            ],
-          ),
+          Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
+            IconButton(
+              tooltip: 'الوضع الليلي',
+              onPressed: onDarkChanged,
+              icon: Icon(dark ? Icons.light_mode : Icons.dark_mode),
+            ),
+            IconButton(
+              tooltip: 'الفواصل',
+              onPressed: onBookmarksPressed,
+              icon: const Icon(Icons.bookmarks_outlined),
+            ),
+            IconButton(
+              tooltip: 'الانتقال إلى آية',
+              onPressed: onGotoPressed,
+              icon: const Icon(Icons.search),
+            ),
+            PopupMenuButton<QuranReadingMode>(
+              tooltip: 'نوع المصحف',
+              icon: const Icon(Icons.menu_book_outlined),
+              initialValue: mode,
+              onSelected: onModeChanged,
+              itemBuilder: (_) => const [
+                PopupMenuItem(value: QuranReadingMode.image, child: Text('مصحف المدينة')),
+                PopupMenuItem(value: QuranReadingMode.tajweed, child: Text('التجويد')),
+                PopupMenuItem(value: QuranReadingMode.thematic, child: Text('موضوعي')),
+                PopupMenuItem(value: QuranReadingMode.text, child: Text('نص')),
+              ],
+            ),
+            if (mode == QuranReadingMode.thematic)
+              IconButton(tooltip: 'بحث في الموضوعات', onPressed: onTopicSearchPressed,
+                icon: const Icon(Icons.topic_outlined)),
+            IconButton(
+              tooltip: 'الإعدادات',
+              onPressed: onSettingsPressed,
+              icon: const Icon(Icons.settings_outlined),
+            ),
+          ]),
         ]),
       ),
     );
   }
-
-  static String _modeLabel(QuranReadingMode mode) => switch (mode) {
-        QuranReadingMode.madani => 'المدينة',
-        QuranReadingMode.tajweed => 'التجويد',
-        QuranReadingMode.thematic => 'موضوعي',
-        QuranReadingMode.text => 'نص',
-      };
-
-  static IconData _modeIcon(QuranReadingMode mode) => switch (mode) {
-        QuranReadingMode.madani => Icons.menu_book_rounded,
-        QuranReadingMode.tajweed => Icons.palette_outlined,
-        QuranReadingMode.thematic => Icons.layers_outlined,
-        QuranReadingMode.text => Icons.text_fields,
-      };
 }
 
 /// ورقة التفسير: اختيار المصدر ثم عرض النص من الـ Backend.
