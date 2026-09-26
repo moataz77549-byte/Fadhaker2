@@ -157,7 +157,7 @@ class VideoChannelRepository {
           statusCode: response.statusCode);
     }
     try {
-      final decoded = jsonDecode(response.body);
+      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
       if (decoded is! List) {
         throw const VideoCatalogException(VideoCatalogFailure.malformed);
       }
