@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:fadhkur_mobile/features/listen/data/mp3quran_api.dart';
 import 'package:fadhkur_mobile/features/video/video_channel.dart';
 import 'package:fadhkur_mobile/features/video/video_channel_repository.dart';
@@ -10,10 +12,9 @@ void main() {
     final api = Mp3QuranApi(client: MockClient((request) async {
       expect(request.url.path, '/api/v3/live-tv');
       expect(request.url.queryParameters['language'], 'ar');
-      return http.Response(
+      return http.Response.bytes(utf8.encode(
         '{"livetv":[{"id":3,"name":"قناة القرآن","url":"https://stream.example/live/new.m3u8"}]}',
-        200,
-      );
+      ), 200);
     }));
     final repository = VideoChannelRepository(
       baseUrl: 'https://example.supabase.co', publishableKey: 'test-key',
