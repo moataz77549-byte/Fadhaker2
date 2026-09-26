@@ -156,6 +156,8 @@ class _MushafReaderScreenState extends ConsumerState<MushafReaderScreen>
       loadedFontFamily: loadedFontFamily,
       fontSize: fontSize,
       mode: mode,
+      showTopicColors: await _stateRepo.showTopicColors(),
+      showTajweedLegend: await _stateRepo.showTajweedLegend(),
     );
     _activeInit = result;
     return result;
@@ -720,6 +722,8 @@ class _MushafReaderScreenState extends ConsumerState<MushafReaderScreen>
                               ),
                               controller: _controller!,
                               mode: init.mode,
+                              showTopicColors: init.showTopicColors,
+                              showTajweedLegend: init.showTajweedLegend,
                               dark: _dark,
                               pageColor: palette.page,
                               inkColor: palette.ink,
@@ -777,6 +781,8 @@ class _ReaderInit {
     required this.loadedFontFamily,
     required this.fontSize,
     required this.mode,
+    required this.showTopicColors,
+    required this.showTajweedLegend,
   });
   final QuranRuntimeConfig config;
   final Riwaya riwaya;
@@ -790,6 +796,8 @@ class _ReaderInit {
   final String? loadedFontFamily;
   final double fontSize;
   final QuranReadingMode mode;
+  final bool showTopicColors;
+  final bool showTajweedLegend;
 }
 
 /// وضع المصحف المصوّر: صور عالية الدقة مع تخزين مؤقت، تكبير/تصغير، وترتيب RTL.

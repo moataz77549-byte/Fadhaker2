@@ -53,6 +53,16 @@ void main() {
     }
   });
 
+  test('topic colors and tajweed legend preferences persist', () async {
+    final repo = QuranReadingStateRepository();
+    expect(await repo.showTopicColors(), isTrue);
+    expect(await repo.showTajweedLegend(), isTrue);
+    await repo.saveShowTopicColors(false);
+    await repo.saveShowTajweedLegend(false);
+    expect(await QuranReadingStateRepository().showTopicColors(), isFalse);
+    expect(await QuranReadingStateRepository().showTajweedLegend(), isFalse);
+  });
+
   test('Madani → Tajweed → Thematic → Text → Madani keeps one QuranLocation',
       () async {
     final repo = QuranReadingStateRepository();

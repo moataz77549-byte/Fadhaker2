@@ -12,6 +12,8 @@ class QuranUnifiedPageView extends StatelessWidget {
     super.key,
     required this.controller,
     required this.mode,
+    required this.showTopicColors,
+    required this.showTajweedLegend,
     required this.dark,
     required this.pageColor,
     required this.inkColor,
@@ -30,6 +32,8 @@ class QuranUnifiedPageView extends StatelessWidget {
 
   final PageController controller;
   final QuranReadingMode mode;
+  final bool showTopicColors;
+  final bool showTajweedLegend;
   final bool dark;
   final Color pageColor;
   final Color inkColor;
@@ -73,6 +77,8 @@ class QuranUnifiedPageView extends StatelessWidget {
             return _PageBody(
               page: data,
               mode: mode,
+              showTopicColors: showTopicColors,
+              showTajweedLegend: showTajweedLegend,
               dark: dark,
               pageColor: pageColor,
               inkColor: inkColor,
@@ -96,6 +102,8 @@ class _PageBody extends StatelessWidget {
   const _PageBody({
     required this.page,
     required this.mode,
+    required this.showTopicColors,
+    required this.showTajweedLegend,
     required this.dark,
     required this.pageColor,
     required this.inkColor,
@@ -111,6 +119,8 @@ class _PageBody extends StatelessWidget {
 
   final MushafPage page;
   final QuranReadingMode mode;
+  final bool showTopicColors;
+  final bool showTajweedLegend;
   final bool dark;
   final Color pageColor;
   final Color inkColor;
@@ -160,12 +170,14 @@ class _PageBody extends StatelessWidget {
                     page: page,
                     style: _baseStyle,
                     dark: dark,
+                    showLegend: showTajweedLegend,
                     onAyahPressed: onAyahPressed,
                   ),
                 QuranReadingMode.thematic => _ThematicLayout(
                     page: page,
                     style: _baseStyle,
                     dark: dark,
+                    showTopicColors: showTopicColors,
                     pageColor: pageColor,
                     mutedColor: mutedColor,
                     topicRepository: topicRepository,
@@ -275,19 +287,21 @@ class _TajweedLayout extends StatelessWidget {
     required this.page,
     required this.style,
     required this.dark,
+    required this.showLegend,
     required this.onAyahPressed,
   });
 
   final MushafPage page;
   final TextStyle style;
   final bool dark;
+  final bool showLegend;
   final ValueChanged<MushafAyah> onAyahPressed;
 
   @override
   Widget build(BuildContext context) {
     return Column(
       children: [
-        Align(
+        if (showLegend) Align(
           alignment: AlignmentDirectional.centerStart,
           child: TextButton.icon(
             onPressed: () => showModalBottomSheet<void>(
@@ -368,6 +382,7 @@ class _ThematicLayout extends StatelessWidget {
     required this.page,
     required this.style,
     required this.dark,
+    required this.showTopicColors,
     required this.pageColor,
     required this.mutedColor,
     required this.topicRepository,
@@ -378,6 +393,7 @@ class _ThematicLayout extends StatelessWidget {
   final MushafPage page;
   final TextStyle style;
   final bool dark;
+  final bool showTopicColors;
   final Color pageColor;
   final Color mutedColor;
   final QuranTopicRepository topicRepository;
@@ -419,6 +435,7 @@ class _ThematicLayout extends StatelessWidget {
                 topics: topicsByVerse[ayah.key] ?? const [],
                 style: style,
                 dark: dark,
+                showTopicColors: showTopicColors,
                 pageColor: pageColor,
                 topicRepository: topicRepository,
                 onAyahPressed: onAyahPressed,
@@ -483,6 +500,7 @@ class _ThematicAyah extends StatelessWidget {
     required this.topics,
     required this.style,
     required this.dark,
+    required this.showTopicColors,
     required this.pageColor,
     required this.topicRepository,
     required this.onAyahPressed,
@@ -493,6 +511,7 @@ class _ThematicAyah extends StatelessWidget {
   final List<QuranTopic> topics;
   final TextStyle style;
   final bool dark;
+  final bool showTopicColors;
   final Color pageColor;
   final QuranTopicRepository topicRepository;
   final ValueChanged<MushafAyah> onAyahPressed;
@@ -501,7 +520,9 @@ class _ThematicAyah extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final topic = topics.isEmpty ? null : topics.first;
-    final accent = topic == null ? null : _topicColor(topic.id, dark);
+    final accent = topic == null || !showTopicColors
+        ? null
+        : _topicColor(topic.id, dark);
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.symmetric(vertical: 3),

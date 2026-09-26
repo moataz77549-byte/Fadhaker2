@@ -9,6 +9,7 @@ Date: 2026-09-26. This is a source and live endpoint audit, not a device accepta
 - Page text is cached in bounded SQLite storage (180 pages); topic records are stored in a separate SQLite database after first sync. Existing bookmarks and reading progress remain in SharedPreferences. No destructive user-data migration is used.
 - Search distinguishes text and topic matches. Verse actions reuse the application audio service.
 - Explicit surah, deep-link, and bookmark destinations now override older saved progress on first open; later mode changes restore the current saved verse. Cached topic data remains readable when a refresh fails.
+- The saved preferences for thematic colors and the tajweed legend now control the visible reader and can be changed in the settings sheet.
 - The Android release workflow checks Flutter analysis/tests, APK ABI, packaged minSdk 26, and APK signature before publishing.
 
 ## Verified during this audit
