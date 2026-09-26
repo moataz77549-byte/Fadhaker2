@@ -78,12 +78,20 @@ class ReciterCatalogService {
       'surah_id,audio_url,quality,bitrate_kbps,is_active';
 
   Future<List<ReciterModel>> load({bool forceRefresh = false}) async {
-    final rows = await _cachedRows('reciters', 'all', {
+    List<Map<String, dynamic>> rows;
+    ReciterCatalogException? backendFailure;
+    try {
+      rows = await _cachedRows('reciters', 'all', {
       'select': _select,
       'is_active': 'eq.true',
       'deleted_at': 'is.null',
       'order': 'is_featured.desc,name_ar.asc',
-    }, forceRefresh: forceRefresh);
+      }, forceRefresh: forceRefresh);
+    } on ReciterCatalogException catch (error) {
+      if (!_useOfficialCatalog || error.failure == ReciterCatalogFailure.configuration) rethrow;
+      backendFailure = error;
+      rows = const [];
+    }
     final curated = rows
         .map(_toReciter)
         .where((r) => r.id.isNotEmpty && r.nameAr.isNotEmpty)
@@ -122,6 +130,7 @@ class ReciterCatalogService {
       result.addAll(curated.where((reader) => !used.contains(_normalizeName(reader.nameAr))));
       return result;
     } catch (_) {
+      if (backendFailure != null && curated.isEmpty) throw backendFailure;
       return curated;
     }
   }
