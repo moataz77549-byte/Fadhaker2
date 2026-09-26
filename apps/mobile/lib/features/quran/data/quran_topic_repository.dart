@@ -17,7 +17,15 @@ class QuranTopicRepository {
   static const _dbName = 'fadhkur_quran_topics.db';
   static const _sourceId = 'quranpedia-topics-v1';
 
-  Future<void> ensureSynced() => _syncFuture ??= _ensureSyncedInternal();
+  Future<void> ensureSynced() {
+    final inFlight = _syncFuture;
+    if (inFlight != null) return inFlight;
+    final next = _ensureSyncedInternal();
+    _syncFuture = next;
+    return next.whenComplete(() {
+      if (identical(_syncFuture, next)) _syncFuture = null;
+    });
+  }
 
   Future<void> _ensureSyncedInternal() async {
     final db = await _openDatabase();
