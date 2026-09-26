@@ -156,6 +156,7 @@ class _PageBody extends StatelessWidget {
               color: pageColor,
               border: Border.all(color: goldColor, width: 2),
             ),
+            alignment: page.number == 1 ? Alignment.center : Alignment.topCenter,
             child: Directionality(
               textDirection: TextDirection.rtl,
               child: switch (mode) {

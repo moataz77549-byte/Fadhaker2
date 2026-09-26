@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:timezone/data/latest_all.dart' as tzdata;
 import 'package:timezone/timezone.dart' as tz;
 
@@ -36,12 +37,22 @@ class NotificationChannels {
   /// separate channel so changing the selection actually changes the alarm.
   static AndroidNotificationChannel adhanForSound(String sound) =>
       AndroidNotificationChannel(
-        'fadhkur_adhan_$sound',
+        'fadhkur_adhan_v2_$sound',
         'الأذان — ${sound == 'adhan_madinah' ? 'المدينة' : sound == 'adhan_short' ? 'قصير' : 'مكة'}',
         description: 'تنبيه الصلاة بصوت المؤذن المختار',
         importance: Importance.max,
         playSound: true,
         sound: RawResourceAndroidNotificationSound(sound),
+      );
+
+  static AndroidNotificationChannel personalForSound(String? sound) =>
+      AndroidNotificationChannel(
+        'fadhkur_personal_v2_${sound ?? 'default'}',
+        'التذكيرات الشخصية${sound == null ? '' : ' — $sound'}',
+        description: 'التذكيرات بصوتها المختار',
+        importance: Importance.high,
+        playSound: true,
+        sound: sound == null ? null : RawResourceAndroidNotificationSound(sound),
       );
 }
 
@@ -59,6 +70,25 @@ class LocalAlarmScheduler {
 
   /// Reserved id range for Adhan alarms (7 days x 6 prayers).
   static const int adhanIdBase = 500000;
+
+  /// Replenish the rolling alarm window using the last location explicitly
+  /// used to enable Adhan. Never request location or permissions at startup.
+  Future<void> restorePrayerAlarms() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getBool('prayer.alarms_enabled') != true) return;
+    final latitude = prefs.getDouble('prayer.alarm_latitude');
+    final longitude = prefs.getDouble('prayer.alarm_longitude');
+    if (latitude == null || longitude == null) return;
+    await schedulePrayerAlarms(
+      coordinates: GeoCoordinates(latitude: latitude, longitude: longitude),
+      method: PrayerCalculationMethod.fromId(prefs.getString('prayer.method')),
+      hanafiAsr: prefs.getBool('prayer.hanafi_asr') ?? false,
+      fajrSound: prefs.getString('prayer.fajr_sound') ?? 'adhan_madinah',
+      regularSound: prefs.getString('prayer.regular_sound') ?? 'adhan_makkah',
+      offsetMinutes: prefs.getInt('prayer.alarm_offset_minutes') ?? 0,
+      requestPermissions: false,
+    );
+  }
 
   Future<void> initialize({
     void Function(String payload)? onSelectRoute,
@@ -247,7 +277,7 @@ class LocalAlarmScheduler {
         body: 'تذكير شخصي من تطبيق فذكر',
         when: reminder.nextOccurrence(now),
         payload: '/custom-reminders',
-        channel: NotificationChannels.personal,
+        channel: NotificationChannels.personalForSound(reminder.sound.androidResource),
         soundResource: reminder.sound.androidResource,
         matchComponents: DateTimeComponents.time,
       );
@@ -263,7 +293,7 @@ class LocalAlarmScheduler {
         body: 'تذكير شخصي من تطبيق فذكر',
         when: when,
         payload: '/custom-reminders',
-        channel: NotificationChannels.personal,
+        channel: NotificationChannels.personalForSound(reminder.sound.androidResource),
         soundResource: reminder.sound.androidResource,
         matchComponents: DateTimeComponents.dayOfWeekAndTime,
       );

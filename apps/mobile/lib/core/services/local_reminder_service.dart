@@ -1,6 +1,7 @@
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/data/latest.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
+import 'package:shared_preferences/shared_preferences.dart';
 
 class LocalReminderService {
   final FlutterLocalNotificationsPlugin plugin;
@@ -36,7 +37,10 @@ class LocalReminderService {
     await plugin.zonedSchedule(
       id, title, body, scheduled,
       const NotificationDetails(
-        android: AndroidNotificationDetails('fadhkur_reminders', 'تذكيرات فذكر', channelDescription: 'الأذان والأذكار', importance: Importance.high, priority: Priority.high),
+        android: AndroidNotificationDetails('fadhkur_adhkar_v2', 'تذكيرات الأذكار',
+          channelDescription: 'تذكير الصباح والمساء بنغمة مسموعة',
+          importance: Importance.high, priority: Priority.high,
+          playSound: true, sound: RawResourceAndroidNotificationSound('reminder_soft')),
         iOS: DarwinNotificationDetails(),
       ),
       // أذكار الصباح/المساء لا تحتاج امتياز exact alarm؛ هذا يتجنب
@@ -57,6 +61,18 @@ class LocalReminderService {
   Future<void> cancelMorningEvening() async {
     await plugin.cancel(1001);
     await plugin.cancel(1002);
+  }
+
+  Future<void> restoreMorningEvening() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getBool('local_adhkar_reminders_enabled') != true) return;
+    final android = plugin.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
+    if (android != null && await android.areNotificationsEnabled() != true) return;
+    await scheduleDaily(id: 1001, title: 'أذكار الصباح',
+        body: 'حان وقت أذكار الصباح', hour: 7, minute: 0);
+    await scheduleDaily(id: 1002, title: 'أذكار المساء',
+        body: 'حان وقت أذكار المساء', hour: 18, minute: 0);
   }
 
   Future<void> cancelAll() => plugin.cancelAll();

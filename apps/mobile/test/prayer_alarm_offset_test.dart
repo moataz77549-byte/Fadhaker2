@@ -17,4 +17,11 @@ void main() {
     expect(NotificationChannels.adhanForSound('adhan_makkah').id,
         isNot(NotificationChannels.adhanForSound('adhan_madinah').id));
   });
+
+  test('a changed reminder sound uses a new Android 8 channel', () {
+    expect(NotificationChannels.personalForSound('reminder_soft').id,
+        isNot(NotificationChannels.personalForSound('adhan_short').id));
+    expect(NotificationChannels.adhanForSound('adhan_madinah').id,
+        startsWith('fadhkur_adhan_v2_'));
+  });
 }

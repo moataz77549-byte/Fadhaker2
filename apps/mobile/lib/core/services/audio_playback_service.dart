@@ -203,7 +203,11 @@ class FadhkurAudioHandler extends audio_service.BaseAudioHandler
     // remain pending until playback stops. Source preparation is already
     // complete, so start playback and return control to the caller so smart
     // scheduling, UI updates and retry timers can continue immediately.
-    unawaited(_player.play());
+    unawaited(_player.play().catchError((Object error) {
+      _errors.add(_isLive
+          ? 'انقطع البث. جرّب محطة أخرى أو أعد المحاولة.'
+          : 'تعذّر تشغيل التلاوة. أعد المحاولة.');
+    }));
   }
 
   Future<void> loadAndPlayQueue({
