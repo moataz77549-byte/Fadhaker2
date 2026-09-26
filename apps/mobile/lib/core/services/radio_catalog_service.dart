@@ -36,6 +36,8 @@ class RadioCatalogService {
 
   static const _cacheKey = 'fadhkur.radio_catalog.v2';
   static const _table = 'stations';
+  static const _cacheSavedAtKey = 'fadhkur.radio_catalog.saved_at.v2';
+  static const _cacheTtl = Duration(days: 7);
 
   static const _select =
       'id,name_ar,name_en,stream_url,fallback_stream_url,logo_url,'
@@ -58,9 +60,20 @@ class RadioCatalogService {
   /// تحديث قسري من الشبكة متجاوزًا الكاش (للسحب للتحديث).
   /// يرمي عند فشل الشبكة — الواجهة تعرض خطأً صادقًا مع زر إعادة.
   Future<List<RadioStation>> refresh({Duration timeout = const Duration(seconds: 10)}) async {
-    final stations = _mergeWithBuiltin(await _fetchRemote(timeout: timeout));
-    await _saveCache(stations);
-    return stations;
+    final remote = await _fetchRemote(timeout: timeout);
+    await _saveCache(remote);
+    return _mergeWithBuiltin(remote);
+  }
+
+  /// Resolve a station again after playback failure. A removed station is
+  /// not resurrected from stale cache; callers may try its approved fallback.
+  Future<RadioStation?> refreshStation(String id) async {
+    final remote = await _fetchRemote(timeout: const Duration(seconds: 8));
+    await _saveCache(remote);
+    for (final station in _mergeWithBuiltin(remote)) {
+      if (station.id == id) return station;
+    }
+    return null;
   }
 
   /// محطات الإدارة الإنتاجية أولًا، ثم المضمّنة بلا تكرار (حسب رابط البث).
@@ -99,7 +112,7 @@ class RadioCatalogService {
       throw StateError('Radio catalog request failed: ${response.statusCode}');
     }
     final decoded = jsonDecode(response.body);
-    if (decoded is! List) return const [];
+    if (decoded is! List) throw const FormatException('Invalid radio catalog');
     return decoded
         .whereType<Map>()
         .map((e) => Map<String, dynamic>.from(e))
@@ -114,12 +127,20 @@ class RadioCatalogService {
       _cacheKey,
       jsonEncode(stations.map((s) => s.toJson()).toList()),
     );
+    await prefs.setInt(_cacheSavedAtKey, DateTime.now().millisecondsSinceEpoch);
   }
 
   Future<List<RadioStation>> _loadCache() async {
     final prefs = await _prefsProvider();
     final raw = prefs.getString(_cacheKey);
     if (raw == null) return const [];
+    final savedAt = prefs.getInt(_cacheSavedAtKey);
+    // Older installations have no timestamp. Keep one-time offline access,
+    // while fresh responses always carry a bounded age.
+    if (savedAt != null &&
+        DateTime.now().millisecondsSinceEpoch - savedAt > _cacheTtl.inMilliseconds) {
+      return const [];
+    }
     try {
       final decoded = jsonDecode(raw);
       if (decoded is! List) return const [];
