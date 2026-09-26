@@ -16,6 +16,10 @@
         android:label="فذكر"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+        <provider
+            android:name=".ReminderSoundProvider"
+            android:authorities="app.fadhkur.reminder_sounds"
+            android:exported="true" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

@@ -54,6 +54,29 @@ class NotificationChannels {
         playSound: true,
         sound: sound == null ? null : RawResourceAndroidNotificationSound(sound),
       );
+
+  static AndroidNotificationChannel personalForReminder(PersonalReminder reminder) {
+    if (reminder.sound != ReminderSound.recorded) {
+      return personalForSound(reminder.sound.androidResource);
+    }
+    final uri = reminder.customSoundPath;
+    if (uri == null ||
+        !uri.startsWith('content://app.fadhkur.reminder_sounds/')) {
+      throw StateError('اختر ملف صوت للمنبه أولًا');
+    }
+    final fileId = Uri.parse(uri).pathSegments.last;
+    if (!RegExp(r'^[a-f0-9-]{36}\.(mp3|m4a|aac|ogg|wav)$').hasMatch(fileId)) {
+      throw StateError('ملف صوت المنبه غير صالح');
+    }
+    return AndroidNotificationChannel(
+      'fadhkur_personal_file_$fileId',
+      'منبه شخصي — صوت من الهاتف',
+      description: 'منبه مخصص يعمل دون اتصال بالصوت الذي اخترته',
+      importance: Importance.max,
+      playSound: true,
+      sound: UriAndroidNotificationSound(uri),
+    );
+  }
 }
 
 /// Schedules exact, doze-proof local notifications: Adhan alarms (Tier 2) and
@@ -214,7 +237,6 @@ class LocalAlarmScheduler {
           when: at,
           payload: '/prayer-times',
           channel: NotificationChannels.adhanForSound(sound),
-          soundResource: sound,
         );
       }
     }
@@ -247,6 +269,30 @@ class LocalAlarmScheduler {
     );
   }
 
+  /// Sends a user-requested notification through the exact channel that the
+  /// personal alarm will use. The user can verify sound/volume before saving.
+  Future<void> previewPersonalReminder(PersonalReminder reminder) async {
+    await initialize();
+    if (!await _ensureAndroidPermissions(requestIfMissing: true)) {
+      throw StateError('اسمح بالإشعارات لتجربة الصوت');
+    }
+    final channel = NotificationChannels.personalForReminder(reminder);
+    await plugin.show(
+      499998, 'تجربة صوت المنبه', reminder.title,
+      NotificationDetails(android: AndroidNotificationDetails(
+        channel.id, channel.name,
+        channelDescription: channel.description,
+        importance: channel.importance,
+        priority: Priority.high,
+        category: AndroidNotificationCategory.alarm,
+        playSound: true,
+        sound: channel.sound,
+        audioAttributesUsage: AudioAttributesUsage.alarm,
+      )),
+      payload: '/custom-reminders',
+    );
+  }
+
   Future<void> cancelPrayerAlarms({int days = 5}) async {
     for (var dayOffset = 0; dayOffset < days; dayOffset++) {
       for (final prayer in Prayer.values) {
@@ -261,13 +307,22 @@ class LocalAlarmScheduler {
     bool requestPermissions = true,
   }) async {
     await initialize();
+    if (!reminder.enabled) {
+      await cancelPersonalReminder(reminder);
+      return;
+    }
     if (!await _ensureAndroidPermissions(
       requestIfMissing: requestPermissions,
     )) {
-      return;
+      throw StateError('اسمح بإشعارات التطبيق لتفعيل المنبه');
     }
+    final android = plugin.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
+    if (android != null && !_canScheduleExact) {
+      throw StateError('امنح إذن المنبهات الدقيقة لتفعيل المنبه');
+    }
+    final channel = NotificationChannels.personalForReminder(reminder);
     await cancelPersonalReminder(reminder);
-    if (!reminder.enabled) return;
 
     final now = DateTime.now();
     if (reminder.isDaily) {
@@ -277,8 +332,7 @@ class LocalAlarmScheduler {
         body: 'تذكير شخصي من تطبيق فذكر',
         when: reminder.nextOccurrence(now),
         payload: '/custom-reminders',
-        channel: NotificationChannels.personalForSound(reminder.sound.androidResource),
-        soundResource: reminder.sound.androidResource,
+        channel: channel,
         matchComponents: DateTimeComponents.time,
       );
       return;
@@ -293,8 +347,7 @@ class LocalAlarmScheduler {
         body: 'تذكير شخصي من تطبيق فذكر',
         when: when,
         payload: '/custom-reminders',
-        channel: NotificationChannels.personalForSound(reminder.sound.androidResource),
-        soundResource: reminder.sound.androidResource,
+        channel: channel,
         matchComponents: DateTimeComponents.dayOfWeekAndTime,
       );
     }
@@ -328,7 +381,6 @@ class LocalAlarmScheduler {
     required DateTime when,
     required AndroidNotificationChannel channel,
     String? payload,
-    String? soundResource,
     DateTimeComponents? matchComponents,
   }) async {
     // ملاحظة: tz.local قد يكون UTC إذا لم يُضبط setLocalLocation،
@@ -347,12 +399,8 @@ class LocalAlarmScheduler {
           : AndroidNotificationCategory.reminder,
       fullScreenIntent: false,
       playSound: true,
-      sound: soundResource == null
-          ? null
-          : RawResourceAndroidNotificationSound(soundResource),
-      audioAttributesUsage: channel.id.startsWith('fadhkur_adhan_') || channel.id == NotificationChannels.adhan.id
-          ? AudioAttributesUsage.alarm
-          : AudioAttributesUsage.notification,
+      sound: channel.sound,
+      audioAttributesUsage: AudioAttributesUsage.alarm,
     );
 
     await plugin.zonedSchedule(

@@ -88,7 +88,7 @@ class ReciterCatalogService {
       'order': 'is_featured.desc,name_ar.asc',
       }, forceRefresh: forceRefresh);
     } on ReciterCatalogException catch (error) {
-      if (!_useOfficialCatalog || error.failure == ReciterCatalogFailure.configuration) rethrow;
+      if (!_useOfficialCatalog) rethrow;
       backendFailure = error;
       rows = const [];
     }

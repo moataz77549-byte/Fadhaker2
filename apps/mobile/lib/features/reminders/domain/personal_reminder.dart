@@ -13,7 +13,7 @@ extension ReminderSoundLabel on ReminderSound {
       case ReminderSound.adhanShort:
         return 'أذان مختصر';
       case ReminderSound.recorded:
-        return 'مقطع مسجّل من الإذاعة';
+        return 'صوت من ملفات الهاتف';
     }
   }
 

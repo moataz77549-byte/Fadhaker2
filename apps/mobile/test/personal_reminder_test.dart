@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fadhkur_mobile/features/reminders/domain/personal_reminder.dart';
+import 'package:fadhkur_mobile/core/services/notification_service.dart';
 
 void main() {
   group('PersonalReminder', () {
@@ -76,6 +77,19 @@ void main() {
       expect(ReminderSoundLabel.fromId('takbeer'), ReminderSound.takbeer);
       expect(ReminderSoundLabel.fromId('nope'), ReminderSound.soft);
       expect(ReminderSound.recorded.androidResource, isNull);
+    });
+
+    test('phone audio gets a stable channel separate from prayer Adhan', () {
+      const uri = 'content://app.fadhkur.reminder_sounds/'
+          '123e4567-e89b-12d3-a456-426614174000.mp3';
+      const reminder = PersonalReminder(id: 9, title: 'تنبيه', hour: 8,
+          minute: 0, sound: ReminderSound.recorded, customSoundPath: uri);
+      final restored = PersonalReminder.fromMap(reminder.toMap());
+      final channel = NotificationChannels.personalForReminder(restored);
+      expect(restored.customSoundPath, uri);
+      expect(channel.id, contains('123e4567-e89b-12d3-a456-426614174000'));
+      expect(channel.id, isNot(NotificationChannels.adhan.id));
+      expect(channel.sound?.sound, uri);
     });
   });
 }

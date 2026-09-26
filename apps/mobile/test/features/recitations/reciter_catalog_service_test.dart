@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:fadhkur_mobile/features/recitations/data/reciter_catalog_service.dart';
+import 'package:fadhkur_mobile/features/listen/data/mp3quran_api.dart';
 
 void main() {
   ReciterCatalogService service(http.Client client, {String key = 'test-key'}) =>
@@ -69,5 +70,23 @@ void main() {
     await expectLater(malformed.load(), throwsA(isA<ReciterCatalogException>()
         .having((e) => e.failure, 'failure', ReciterCatalogFailure.malformed)));
     malformed.dispose();
+  });
+
+  test('official moshafs remain available when curated backend is unconfigured', () async {
+    final official = Mp3QuranApi(client: MockClient((request) async => http.Response(
+      '{"reciters":[{"id":7,"name":"قارئ","moshaf":[{"id":11,'
+      '"name":"حفص مرتل","server":"https://server.mp3quran.net/test/",'
+      '"surah_list":"1,2"}]}]}', 200,
+    )));
+    final catalog = ReciterCatalogService(
+      client: MockClient((request) async => throw StateError('backend should not be called')),
+      publishableKey: '', mp3QuranApi: official, useOfficialCatalog: true,
+    );
+    final reciters = await catalog.load();
+    expect(reciters.single.provider, 'MP3Quran.net');
+    final tracks = await catalog.loadTracks(reciters.single.id);
+    expect(tracks, hasLength(2));
+    expect(tracks.first.moshafName, 'حفص مرتل');
+    catalog.dispose();
   });
 }
