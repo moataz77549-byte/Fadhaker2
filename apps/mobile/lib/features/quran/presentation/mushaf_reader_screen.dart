@@ -2,9 +2,11 @@ import 'dart:async';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../../../core/services/audio_playback_service.dart';
 import '../../home/data/reading_progress_repository.dart';
 import '../data/mushaf_bookmark_repository.dart';
 import '../data/mushaf_repository.dart';
@@ -15,6 +17,7 @@ import '../data/quran_reading_state_repository.dart';
 import '../data/quran_topic_repository.dart';
 import '../data/tafsir_cache_repository.dart';
 import '../domain/mushaf_edition.dart';
+import '../domain/quran_audio.dart';
 import '../domain/mushaf_page.dart';
 import '../domain/quran_font.dart';
 import '../domain/quran_navigation.dart';
@@ -40,16 +43,16 @@ import 'quran_translation_sheet.dart';
 /// - http + path_provider (تحميل ملفات الخطوط عند أول استخدام وتخزينها —
 ///   راجع data/quran_font_loader.dart)
 /// - share_plus (مشاركة الآيات)
-class MushafReaderScreen extends StatefulWidget {
+class MushafReaderScreen extends ConsumerStatefulWidget {
   const MushafReaderScreen({super.key, this.initialPage = 293, this.initialRiwayaId});
   final int initialPage;
   final String? initialRiwayaId;
 
   @override
-  State<MushafReaderScreen> createState() => _MushafReaderScreenState();
+  ConsumerState<MushafReaderScreen> createState() => _MushafReaderScreenState();
 }
 
-class _MushafReaderScreenState extends State<MushafReaderScreen> {
+class _MushafReaderScreenState extends ConsumerState<MushafReaderScreen> {
   final _configRepo = QuranConfigRepository();
   final _apiRepo = QuranApiRepository();
   final _mushafRepo = MushafRepository();
@@ -71,6 +74,7 @@ class _MushafReaderScreenState extends State<MushafReaderScreen> {
   late Future<_ReaderInit> _initFuture;
   PageController? _controller;
   final Map<int, Future<MushafPage>> _textPages = {};
+  List<QuranRecitation>? _recitations;
 
   int _currentPage = 1;
   String? _currentVerseKey;
@@ -291,6 +295,144 @@ class _MushafReaderScreenState extends State<MushafReaderScreen> {
     }
   }
 
+  Future<QuranRecitation?> _resolveRecitation({
+    bool forcePicker = false,
+  }) async {
+    var recitations = _recitations;
+    if (recitations == null) {
+      try {
+        recitations = await _apiRepo.recitations();
+        _recitations = recitations;
+      } catch (_) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('تعذّر تحميل قائمة القراء الآن')),
+          );
+        }
+        return null;
+      }
+    }
+    if (recitations.isEmpty) return null;
+
+    final saved = await _stateRepo.preferredReciter();
+    final savedId = saved != null && saved.startsWith('qf:')
+        ? int.tryParse(saved.substring(3))
+        : null;
+    if (!forcePicker && savedId != null) {
+      for (final item in recitations) {
+        if (item.id == savedId) return item;
+      }
+    }
+
+    if (!mounted) return null;
+    final picked = await showModalBottomSheet<QuranRecitation>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: DraggableScrollableSheet(
+          expand: false,
+          initialChildSize: 0.7,
+          minChildSize: 0.4,
+          maxChildSize: 0.9,
+          builder: (context, controller) => Column(
+            children: [
+              const Text(
+                'اختر قارئًا للآيات',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                'القائمة من Quran Foundation — تلاوات آية بآية',
+                style: TextStyle(fontSize: 11, color: Colors.grey),
+              ),
+              const Divider(),
+              Expanded(
+                child: ListView.builder(
+                  controller: controller,
+                  itemCount: recitations!.length,
+                  itemBuilder: (context, index) {
+                    final item = recitations![index];
+                    return ListTile(
+                      leading: const Icon(Icons.record_voice_over_outlined),
+                      title: Text(item.nameAr),
+                      subtitle: item.style == null ? null : Text(item.style!),
+                      trailing: item.id == savedId
+                          ? const Icon(Icons.check_circle_outline)
+                          : null,
+                      onTap: () => Navigator.pop(context, item),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (picked != null) {
+      await _stateRepo.savePreferredReciter('qf:${picked.id}');
+    }
+    return picked;
+  }
+
+  Future<void> _playAyahAudio(
+    _ReaderInit init,
+    MushafAyah ayah, {
+    bool fromHere = false,
+    bool chooseReciter = false,
+  }) async {
+    final recitation =
+        await _resolveRecitation(forcePicker: chooseReciter);
+    if (recitation == null || !mounted) return;
+
+    try {
+      final page = await _loadTextPage(init, _currentPage);
+      final title = 'سورة ${page.surahName} • الآية ${ayah.key}';
+      final player = ref.read(audioPlaybackProvider.notifier);
+      if (fromHere) {
+        final queue = await _apiRepo.audioFromAyah(
+          verseKey: ayah.key,
+          recitationId: recitation.id,
+        );
+        if (queue.isEmpty) throw StateError('Empty Quran audio queue');
+        await player.playQuranQueue(
+          'سورة ${page.surahName} • من الآية ${ayah.key}',
+          recitation.nameAr,
+          queue.map((item) => item.audioUrl).toList(growable: false),
+        );
+      } else {
+        final audio = await _apiRepo.ayahAudio(
+          verseKey: ayah.key,
+          recitationId: recitation.id,
+        );
+        await player.playQuranTrack(
+          title,
+          recitation.nameAr,
+          audio.audioUrl,
+          duration: audio.duration,
+        );
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              fromHere
+                  ? 'بدأ التشغيل من الآية ${ayah.key}'
+                  : 'بدأ تشغيل الآية ${ayah.key}',
+            ),
+          ),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('تعذّر تشغيل التلاوة الآن')),
+        );
+      }
+    }
+  }
+
   Future<void> _showAyahActions(_ReaderInit init, MushafAyah ayah) async {
     setState(() => _currentVerseKey = ayah.key);
     unawaited(_persistProgress(init, _currentPage));
@@ -300,6 +442,31 @@ class _MushafReaderScreenState extends State<MushafReaderScreen> {
       showDragHandle: true,
       builder: (context) => SafeArea(
         child: Wrap(children: [
+          ListTile(
+            leading: const Icon(Icons.play_circle_outline),
+            title: const Text('تشغيل هذه الآية'),
+            onTap: () {
+              Navigator.pop(context);
+              unawaited(_playAyahAudio(init, ayah));
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.playlist_play_outlined),
+            title: const Text('تشغيل من هذه الآية'),
+            subtitle: const Text('حتى نهاية السورة بالتلاوة آيةً آية'),
+            onTap: () {
+              Navigator.pop(context);
+              unawaited(_playAyahAudio(init, ayah, fromHere: true));
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.record_voice_over_outlined),
+            title: const Text('اختيار قارئ وتشغيل الآية'),
+            onTap: () {
+              Navigator.pop(context);
+              unawaited(_playAyahAudio(init, ayah, chooseReciter: true));
+            },
+          ),
           ListTile(
             leading: const Icon(Icons.menu_book_outlined),
             title: const Text('عرض التفسير'),
