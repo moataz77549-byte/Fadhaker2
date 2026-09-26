@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/repositories/quran_yutla_repository.dart';
 import '../../../core/services/audio_playback_service.dart';
+import '../../../core/services/radio_catalog_service.dart';
 import '../../../core/utils/haptics.dart';
 import '../../../core/widgets/brand_mark.dart';
 import '../../../core/widgets/empty_state.dart';
@@ -27,6 +28,8 @@ class RadioScreen extends ConsumerWidget {
         audioPlaybackProvider.select((s) => s.sleepTimerMinutes));
     final speed =
         ref.watch(audioPlaybackProvider.select((s) => s.speed));
+    final playbackError = ref.watch(
+        audioPlaybackProvider.select((s) => s.errorMessage));
     final audio = ref.read(audioPlaybackProvider.notifier);
     final smart = ref.watch(smartRadioProvider);
     final smartController = ref.read(smartRadioProvider.notifier);
@@ -87,6 +90,16 @@ class RadioScreen extends ConsumerWidget {
                     : null,
               ),
               const SizedBox(height: 12),
+              if (playbackError != null) ...[
+                Card(
+                  child: ListTile(
+                    leading: const Icon(Icons.wifi_off_outlined),
+                    title: Text(playbackError),
+                    subtitle: const Text('اسحب للتحديث أو اختر إذاعة أخرى.'),
+                  ),
+                ),
+                const SizedBox(height: 8),
+              ],
               _PlaybackControlsRow(
                 sleepMinutes: sleepMinutes,
                 speed: speed,
@@ -107,15 +120,35 @@ class RadioScreen extends ConsumerWidget {
                   onPlayPause: () async {
                     await AppHaptics.lightTap();
                     if (!active) smartController.deactivate();
-                    active
-                        ? audio.togglePlayPause()
-                        : audio.playRadio(
-                            station.nameAr,
-                            stationKindLabel(station.kind),
-                            station.streamUrl,
-                            fallbackUrl: station.fallbackUrl,
-                            bitrateKbps: station.bitrateKbps,
-                          );
+                    if (active) {
+                      await audio.togglePlayPause();
+                      return;
+                    }
+                    await audio.playRadio(
+                      station.nameAr,
+                      stationKindLabel(station.kind),
+                      station.streamUrl,
+                      fallbackUrl: station.fallbackUrl,
+                      bitrateKbps: station.bitrateKbps,
+                    );
+                    if (ref.read(audioPlaybackProvider).errorMessage == null) return;
+                    // A single bounded retry with the latest approved URL.
+                    // If the catalog is offline the existing fallback remains
+                    // available; no unbounded reconnect loop is started.
+                    try {
+                      final latest = await radioCatalogService.refreshStation(station.id);
+                      if (latest != null) {
+                        await audio.playRadio(
+                          latest.nameAr,
+                          stationKindLabel(latest.kind),
+                          latest.streamUrl,
+                          fallbackUrl: latest.fallbackUrl,
+                          bitrateKbps: latest.bitrateKbps,
+                        );
+                      }
+                    } catch (_) {
+                      // Error banner above remains visible to the user.
+                    }
                   },
                 );
               }),
