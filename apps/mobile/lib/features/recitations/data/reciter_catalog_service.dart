@@ -8,6 +8,8 @@ import 'package:http/http.dart' as http;
 import '../../../core/config/supabase_config.dart';
 import '../../../core/models/app_models.dart';
 import '../../listen/data/listen_metadata_store.dart';
+import '../../listen/data/mp3quran_api.dart';
+import '../../listen/data/audio_url_builder.dart';
 
 enum ReciterCatalogFailure { configuration, network, permission, server, malformed }
 
@@ -35,10 +37,14 @@ class ReciterTrack {
     required this.surahNumber,
     required this.audioUrl,
     required this.quality,
+    this.moshafId = '',
+    this.moshafName = '',
   });
   final int surahNumber;
   final String audioUrl;
   final String quality;
+  final String moshafId;
+  final String moshafName;
 }
 
 class ReciterCatalogService {
@@ -47,15 +53,23 @@ class ReciterCatalogService {
     String? baseUrl,
     String? publishableKey,
     ListenMetadataStore? cache,
+    Mp3QuranApi? mp3QuranApi,
+    bool? useOfficialCatalog,
   })  : _client = client ?? http.Client(),
         _baseUrl = baseUrl ?? SupabaseConfig.url,
         _publishableKey = publishableKey ?? SupabaseConfig.publishableKey,
-        _cache = cache ?? listenMetadataStore;
+        _cache = cache ?? listenMetadataStore,
+        _mp3QuranApi = mp3QuranApi ?? Mp3QuranApi(),
+        _officialOverride = useOfficialCatalog;
 
   final http.Client _client;
   final String _baseUrl;
   final String _publishableKey;
   final ListenMetadataStore _cache;
+  final Mp3QuranApi _mp3QuranApi;
+  final bool? _officialOverride;
+  final Map<String, Map<String, dynamic>> _officialById = {};
+  bool get _useOfficialCatalog => _officialOverride ?? (_baseUrl == SupabaseConfig.url);
   static const _catalogTtl = Duration(hours: 24);
 
   static const _select =
@@ -70,14 +84,91 @@ class ReciterCatalogService {
       'deleted_at': 'is.null',
       'order': 'is_featured.desc,name_ar.asc',
     }, forceRefresh: forceRefresh);
-    return rows
+    final curated = rows
         .map(_toReciter)
         .where((r) => r.id.isNotEmpty && r.nameAr.isNotEmpty)
         .toList(growable: false);
+    if (!_useOfficialCatalog) return curated;
+    try {
+      final official = await _officialReciters(forceRefresh: forceRefresh);
+      final canonical = {
+        for (final reader in curated) _normalizeName(reader.nameAr): reader.id,
+      };
+      final result = <ReciterModel>[];
+      final used = <String>{};
+      _officialById.clear();
+      for (final row in official) {
+        final id = row['id']?.toString();
+        final name = '${row['name'] ?? ''}'.trim();
+        if (id == null || name.isEmpty) continue;
+        final identity = _normalizeName(name);
+        if (!used.add(identity)) continue;
+        final canonicalId = canonical[identity] ?? 'mp3quran:$id';
+        _officialById[canonicalId] = row;
+        final moshafs = row['moshaf'] is List ? row['moshaf'] as List : const [];
+        final available = <int>{};
+        for (final moshaf in moshafs.whereType<Map>()) {
+          available.addAll(AudioUrlBuilder.availableSurahs(moshaf['surah_list']?.toString()));
+        }
+        result.add(ReciterModel(
+          id: canonicalId, nameAr: name,
+          riwaya: moshafs.isNotEmpty && moshafs.first is Map
+              ? '${(moshafs.first as Map)['name'] ?? 'التلاوات المتاحة'}'
+              : 'التلاوات المتاحة',
+          surahsCount: available.length,
+          bio: '', provider: 'MP3Quran.net', audioQuality: 'MP3',
+        ));
+      }
+      result.addAll(curated.where((reader) => !used.contains(_normalizeName(reader.nameAr))));
+      return result;
+    } catch (_) {
+      return curated;
+    }
+  }
+
+  String _normalizeName(String name) => name
+      .replaceAll(RegExp(r'[\u064B-\u065F\u0670]'), '')
+      .replaceAll(RegExp('[أإآ]'), 'ا')
+      .replaceAll(RegExp('ى'), 'ي')
+      .replaceAll(RegExp(r'\s+'), ' ').trim();
+
+  Future<List<Map<String, dynamic>>> _officialReciters({required bool forceRefresh}) async {
+    ({List<Map<String, dynamic>> rows, DateTime updatedAt})? cached;
+    try { cached = await _cache.read('mp3quran', 'reciters'); } catch (_) {}
+    if (!forceRefresh && cached != null &&
+        DateTime.now().difference(cached.updatedAt) < _catalogTtl) return cached.rows;
+    try {
+      final rows = await _mp3QuranApi.reciters();
+      try { await _cache.write('mp3quran', 'reciters', rows); } catch (_) {}
+      return rows;
+    } catch (_) {
+      if (cached != null) return cached.rows;
+      rethrow;
+    }
   }
 
   Future<List<ReciterTrack>> loadTracks(String reciterId, {bool forceRefresh = false}) async {
     if (reciterId.isEmpty) return const [];
+    final official = _officialById[reciterId];
+    if (official != null) {
+      final tracks = <ReciterTrack>[];
+      final moshafs = official['moshaf'];
+      if (moshafs is List) {
+        for (final moshaf in moshafs.whereType<Map>()) {
+          final available = AudioUrlBuilder.availableSurahs(moshaf['surah_list']?.toString());
+          final server = '${moshaf['server'] ?? ''}';
+          final moshafId = '${moshaf['id'] ?? ''}';
+          final name = '${moshaf['name'] ?? 'مصحف صوتي'}';
+          for (final surah in available.toList()..sort()) {
+            final url = AudioUrlBuilder.forMp3Quran(server, surah, available);
+            if (url == null) continue;
+            tracks.add(ReciterTrack(surahNumber: surah, audioUrl: url.toString(),
+                quality: name, moshafId: moshafId, moshafName: name));
+          }
+        }
+      }
+      return tracks;
+    }
     final rows = await _cachedRows('reciter_tracks', reciterId, {
       'select': _trackSelect,
       'reciter_id': 'eq.$reciterId',
@@ -176,7 +267,10 @@ class ReciterCatalogService {
     );
   }
 
-  void dispose() => _client.close();
+  void dispose() {
+    _client.close();
+    _mp3QuranApi.dispose();
+  }
 }
 
 final reciterCatalogService = ReciterCatalogService();
