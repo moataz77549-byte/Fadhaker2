@@ -24,6 +24,7 @@ class PlaybackState {
   final int? sleepTimerMinutes;
   final bool isMuted;
   final double speed;
+  final String? errorMessage;
 
   const PlaybackState({
     this.isPlaying = false,
@@ -37,6 +38,7 @@ class PlaybackState {
     this.sleepTimerMinutes,
     this.isMuted = false,
     this.speed = 1.0,
+    this.errorMessage,
   });
 
   PlaybackState copyWith({
@@ -51,6 +53,7 @@ class PlaybackState {
     Object? sleepTimerMinutes = _noChange,
     bool? isMuted,
     double? speed,
+    Object? errorMessage = _noChange,
   }) {
     return PlaybackState(
       isPlaying: isPlaying ?? this.isPlaying,
@@ -66,6 +69,8 @@ class PlaybackState {
           : sleepTimerMinutes as int?,
       isMuted: isMuted ?? this.isMuted,
       speed: speed ?? this.speed,
+      errorMessage: identical(errorMessage, _noChange)
+          ? this.errorMessage : errorMessage as String?,
     );
   }
 }
@@ -133,6 +138,8 @@ class FadhkurAudioHandler extends audio_service.BaseAudioHandler
   bool _fallbackUsed = false;
   bool _failoverInProgress = false;
   String? _fallbackUri;
+  final StreamController<String> _errors = StreamController<String>.broadcast();
+  Stream<String> get errorStream => _errors.stream;
 
   Stream<Duration> get positionStream => _player.positionStream;
   Stream<Duration?> get durationStream => _player.durationStream;
@@ -179,9 +186,17 @@ class FadhkurAudioHandler extends audio_service.BaseAudioHandler
       await _setSource(logicalUri, isFile: isFile);
     } catch (_) {
       final fallback = _fallbackUri;
-      if (!_isLive || fallback == null) rethrow;
+      if (!_isLive || fallback == null) {
+        _errors.add('تعذّر فتح البث. تحقق من الاتصال ثم حاول مجددًا.');
+        rethrow;
+      }
       _fallbackUsed = true;
-      await _setSource(fallback, isFile: false);
+      try {
+        await _setSource(fallback, isFile: false);
+      } catch (_) {
+        _errors.add('توقف البث والرابط الاحتياطي. جرّب محطة أخرى.');
+        rethrow;
+      }
     }
 
     // Do not await play(): for a live radio stream the returned Future may
@@ -248,9 +263,12 @@ class FadhkurAudioHandler extends audio_service.BaseAudioHandler
   Future<void> _recoverRadioFromError() async {
     final fallback = _fallbackUri;
     if (!_isLive ||
-        fallback == null ||
         _fallbackUsed ||
         _failoverInProgress) {
+      return;
+    }
+    if (fallback == null) {
+      _errors.add('انقطع البث. أعد المحاولة لتحديث الرابط.');
       return;
     }
     _failoverInProgress = true;
@@ -261,6 +279,7 @@ class FadhkurAudioHandler extends audio_service.BaseAudioHandler
       if (shouldResume) unawaited(_player.play());
     } catch (_) {
       await _player.stop();
+      _errors.add('تعذّر تشغيل الرابط الاحتياطي. أعد المحاولة.');
     } finally {
       _failoverInProgress = false;
     }
@@ -341,6 +360,7 @@ class FadhkurAudioHandler extends audio_service.BaseAudioHandler
     await _eventSubscription?.cancel();
     await _durationSubscription?.cancel();
     await _player.dispose();
+    await _errors.close();
   }
 }
 
@@ -367,6 +387,9 @@ class FadhkurAudioNotifier extends StateNotifier<PlaybackState> {
         );
       }),
     );
+    _subscriptions.add(_handler.errorStream.listen((message) {
+      state = state.copyWith(isPlaying: false, errorMessage: message);
+    }));
   }
 
   final FadhkurAudioHandler _handler;
@@ -465,6 +488,7 @@ class FadhkurAudioNotifier extends StateNotifier<PlaybackState> {
       currentUri: uri,
       position: Duration.zero,
       duration: fallbackDuration,
+      errorMessage: null,
     );
     try {
       await _handler.loadAndPlay(
@@ -477,7 +501,12 @@ class FadhkurAudioNotifier extends StateNotifier<PlaybackState> {
         isFile: isFile,
       );
     } catch (_) {
-      state = state.copyWith(isPlaying: false);
+      state = state.copyWith(
+        isPlaying: false,
+        errorMessage: mode == PlaybackMode.radio
+            ? 'تعذّر تشغيل البث. تحقق من الاتصال ثم حدّث الرابط.'
+            : 'تعذّر تشغيل التلاوة. تحقق من الاتصال أو التنزيل.',
+      );
     }
   }
 
