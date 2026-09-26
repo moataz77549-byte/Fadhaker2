@@ -39,6 +39,18 @@ class MushafRepository {
       },
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
+    // Page payloads are reproducible cache, not user data. Keep a bounded LRU
+    // window on disk so long-term browsing never grows storage without limit.
+    await database.rawDelete(
+      '''
+      DELETE FROM mushaf_pages
+      WHERE cache_key NOT IN (
+        SELECT cache_key FROM mushaf_pages
+        ORDER BY updated_at DESC
+        LIMIT 180
+      )
+      ''',
+    );
     return result;
   }
 
