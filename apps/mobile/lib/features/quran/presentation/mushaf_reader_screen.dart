@@ -22,6 +22,7 @@ import '../domain/mushaf_page.dart';
 import '../domain/quran_font.dart';
 import '../domain/quran_navigation.dart';
 import '../domain/quran_location.dart';
+import '../domain/quran_reader_start.dart';
 import '../domain/riwaya.dart';
 import '../domain/tafsir_source.dart';
 import '../../../core/widgets/skeleton.dart';
@@ -44,8 +45,15 @@ import 'quran_translation_sheet.dart';
 ///   راجع data/quran_font_loader.dart)
 /// - share_plus (مشاركة الآيات)
 class MushafReaderScreen extends ConsumerStatefulWidget {
-  const MushafReaderScreen({super.key, this.initialPage = 293, this.initialRiwayaId});
-  final int initialPage;
+  const MushafReaderScreen({
+    super.key,
+    this.initialPage,
+    this.initialVerseKey,
+    this.initialRiwayaId,
+  });
+  /// An explicit destination takes precedence over saved progress on first open.
+  final int? initialPage;
+  final String? initialVerseKey;
   final String? initialRiwayaId;
 
   @override
@@ -77,6 +85,7 @@ class _MushafReaderScreenState extends ConsumerState<MushafReaderScreen>
   final Map<int, Future<MushafPage>> _textPages = {};
   List<QuranRecitation>? _recitations;
   _ReaderInit? _activeInit;
+  bool _hasInitializedLocation = false;
 
   int _currentPage = 1;
   String? _currentVerseKey;
@@ -128,10 +137,16 @@ class _MushafReaderScreenState extends ConsumerState<MushafReaderScreen>
     final mode = await _stateRepo.readingMode();
     final savedLocation = await _stateRepo.lastLocation(riwaya.id);
     final savedPage = savedLocation?.pageNumber ?? await _stateRepo.lastPage(riwaya.id);
-    var page = savedPage ?? widget.initialPage;
-    page = page.clamp(1, QuranNavigation.quranFoundationTextPages);
+    final start = QuranReaderStart.resolve(
+      requestedPage: _hasInitializedLocation ? null : widget.initialPage,
+      requestedVerseKey: _hasInitializedLocation ? null : widget.initialVerseKey,
+      savedLocation: savedLocation,
+      savedPage: savedPage,
+    );
+    final page = start.pageNumber;
     _currentPage = page;
-    _currentVerseKey = savedLocation?.verseKey;
+    _currentVerseKey = start.verseKey;
+    _hasInitializedLocation = true;
     _controller = PageController(initialPage: QuranNavigation.pageToIndex(page));
     final result = _ReaderInit(
       config: config,
@@ -141,6 +156,8 @@ class _MushafReaderScreenState extends ConsumerState<MushafReaderScreen>
       loadedFontFamily: loadedFontFamily,
       fontSize: fontSize,
       mode: mode,
+      showTopicColors: await _stateRepo.showTopicColors(),
+      showTajweedLegend: await _stateRepo.showTajweedLegend(),
     );
     _activeInit = result;
     return result;
@@ -211,8 +228,9 @@ class _MushafReaderScreenState extends ConsumerState<MushafReaderScreen>
         verse: parsed.verse,
       );
       if (!mounted) return;
-      setState(() => _currentVerseKey = verseKey);
       await _jumpToPage(init, page);
+      if (!mounted) return;
+      setState(() => _currentVerseKey = verseKey);
       await _persistProgress(init, page);
     } catch (_) {
       if (mounted) {
@@ -325,8 +343,9 @@ class _MushafReaderScreenState extends ConsumerState<MushafReaderScreen>
         );
       }
       if (page == null) return;
-      setState(() => _currentVerseKey = key);
       await _jumpToPage(init, page);
+      if (!mounted) return;
+      setState(() => _currentVerseKey = key);
       await _persistProgress(init, page);
     } catch (_) {
       if (mounted) {
@@ -610,15 +629,24 @@ class _MushafReaderScreenState extends ConsumerState<MushafReaderScreen>
       );
       return;
     }
+    if (bookmark.riwayaId == init.riwaya.id) {
+      await _jumpToPage(init, page);
+      if (!mounted) return;
+      setState(() => _currentVerseKey = bookmark.ayahKey);
+      await _persistProgress(init, page);
+      return;
+    }
     // الانتقال للفاصلة قد يتطلب تبديل الرواية أولًا.
     if (bookmark.riwayaId != init.riwaya.id) {
       await _stateRepo.saveRiwayaId(bookmark.riwayaId);
     }
+    await _persistProgress(init, _currentPage);
     if (!mounted) return;
     await Navigator.of(context).pushReplacement(
       MaterialPageRoute(
         builder: (_) => MushafReaderScreen(
           initialPage: page,
+          initialVerseKey: bookmark.ayahKey,
           initialRiwayaId: bookmark.riwayaId,
         ),
       ),
@@ -694,6 +722,8 @@ class _MushafReaderScreenState extends ConsumerState<MushafReaderScreen>
                               ),
                               controller: _controller!,
                               mode: init.mode,
+                              showTopicColors: init.showTopicColors,
+                              showTajweedLegend: init.showTajweedLegend,
                               dark: _dark,
                               pageColor: palette.page,
                               inkColor: palette.ink,
@@ -751,6 +781,8 @@ class _ReaderInit {
     required this.loadedFontFamily,
     required this.fontSize,
     required this.mode,
+    required this.showTopicColors,
+    required this.showTajweedLegend,
   });
   final QuranRuntimeConfig config;
   final Riwaya riwaya;
@@ -764,6 +796,8 @@ class _ReaderInit {
   final String? loadedFontFamily;
   final double fontSize;
   final QuranReadingMode mode;
+  final bool showTopicColors;
+  final bool showTajweedLegend;
 }
 
 /// وضع المصحف المصوّر: صور عالية الدقة مع تخزين مؤقت، تكبير/تصغير، وترتيب RTL.

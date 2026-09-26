@@ -47,6 +47,8 @@ class _QuranSettingsSheetState extends State<QuranSettingsSheet> {
       fontId: font.id,
       fontSize: await repo.fontSize(),
       mode: await repo.readingMode(),
+      showTopicColors: await repo.showTopicColors(),
+      showTajweedLegend: await repo.showTajweedLegend(),
       loadedFontFamily: await QuranFontLoader.ensureLoaded(font),
     );
   }
@@ -145,6 +147,20 @@ class _QuranSettingsSheetState extends State<QuranSettingsSheet> {
                       ),
                   ],
                 ),
+                SwitchListTile(
+                  title: const Text('إظهار ألوان الموضوعات'),
+                  value: values.showTopicColors,
+                  onChanged: (value) => _update(
+                    () => widget.stateRepository.saveShowTopicColors(value),
+                  ),
+                ),
+                SwitchListTile(
+                  title: const Text('إظهار مفتاح التجويد'),
+                  value: values.showTajweedLegend,
+                  onChanged: (value) => _update(
+                    () => widget.stateRepository.saveShowTajweedLegend(value),
+                  ),
+                ),
                 const SizedBox(height: 16),
                 const Text('الخط', style: TextStyle(fontWeight: FontWeight.bold)),
                 const SizedBox(height: 8),
@@ -189,6 +205,8 @@ class _QuranSettingsSheetState extends State<QuranSettingsSheet> {
                   onChanged: (v) => setState(() {
                     _future = _future.then((old) => _SettingsValues(
                       riwayaId: old.riwayaId, editionId: old.editionId, fontId: old.fontId, fontSize: v, mode: old.mode,
+                      showTopicColors: old.showTopicColors,
+                      showTajweedLegend: old.showTajweedLegend,
                       loadedFontFamily: old.loadedFontFamily,
                     ));
                   }),
@@ -228,6 +246,8 @@ class _SettingsValues {
     required this.fontId,
     required this.fontSize,
     required this.mode,
+    required this.showTopicColors,
+    required this.showTajweedLegend,
     required this.loadedFontFamily,
   });
   final String riwayaId;
@@ -235,6 +255,8 @@ class _SettingsValues {
   final String fontId;
   final double fontSize;
   final QuranReadingMode mode;
+  final bool showTopicColors;
+  final bool showTajweedLegend;
 
   /// اسم عائلة الخط بعد تحميله؛ null = خط النظام.
   final String? loadedFontFamily;

@@ -56,7 +56,7 @@ class _HomeScreenState extends State<HomeScreen> {
     await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => MushafReaderScreen(
-          initialPage: target,
+          initialPage: page == null ? null : target,
           initialRiwayaId: progress?.riwayaId,
         ),
       ),
