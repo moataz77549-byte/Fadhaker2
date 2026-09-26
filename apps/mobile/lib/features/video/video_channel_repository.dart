@@ -62,8 +62,8 @@ class VideoChannelRepository {
   final Mp3QuranApi _mp3QuranApi;
   bool get _useOfficialCatalog => _baseUrl == SupabaseConfig.url;
 
-  static const _cacheKey = 'fadhkur.video_channels.v1';
-  static const _cacheSavedAtKey = 'fadhkur.video_channels.saved_at.v1';
+  static const _cacheKey = 'fadhkur.video_channels.v2';
+  static const _cacheSavedAtKey = 'fadhkur.video_channels.saved_at.v2';
   static const _cacheTtl = Duration(days: 7);
 
   Future<VideoCatalogResult> loadResult({
@@ -172,10 +172,8 @@ class VideoChannelRepository {
             return provider != 'user_configured' && provider != 'YouTube';
           })
           .map(VideoChannel.fromSupabase)
-          .where((c) =>
-              c.streamUrl.isNotEmpty &&
-              (c.sourceType != VideoSourceType.youtube ||
-                  c.youtubeVideoId != null))
+          .where((c) => c.streamUrl.isNotEmpty &&
+              c.sourceType != VideoSourceType.youtube)
           .toList(growable: false);
       if (!_useOfficialCatalog) return curated;
       try {
