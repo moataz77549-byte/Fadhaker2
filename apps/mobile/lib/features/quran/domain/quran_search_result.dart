@@ -31,7 +31,11 @@ class QuranSearchResult {
           : QuranSearchResultType.navigation,
       title: (json['name'] ?? json['arabic'] ?? '').toString(),
       subtitle: resultType,
-      verseKey: resultType == 'ayah' ? key?.toString() : null,
+      verseKey: resultType == 'ayah'
+          ? key?.toString()
+          : resultType == 'surah'
+              ? '${key}:1'
+              : null,
       pageNumber: resultType == 'page'
           ? (key is num ? key.toInt() : int.tryParse('$key'))
           : null,
