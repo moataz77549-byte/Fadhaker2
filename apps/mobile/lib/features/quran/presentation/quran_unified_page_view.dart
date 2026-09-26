@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
+import 'package:flutter/rendering.dart';
 
+import '../data/surah_metadata.dart';
 import '../data/quran_reading_state_repository.dart';
 import '../data/quran_topic_repository.dart';
 import '../domain/mushaf_page.dart';
@@ -136,7 +139,9 @@ class _PageBody extends StatelessWidget {
   TextStyle get _baseStyle => TextStyle(
         fontFamily: fontFamily,
         fontSize: fontSize,
-        height: lineHeight,
+        height: mode == QuranReadingMode.madani || mode == QuranReadingMode.text
+            ? lineHeight.clamp(1.65, 1.9)
+            : lineHeight,
         color: inkColor,
       );
 
@@ -151,7 +156,7 @@ class _PageBody extends StatelessWidget {
               minHeight: constraints.maxHeight - 12,
               maxWidth: 650,
             ),
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             decoration: BoxDecoration(
               color: pageColor,
               border: Border.all(color: goldColor, width: 2),
@@ -228,9 +233,10 @@ class _MadaniLayout extends StatelessWidget {
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 6),
-          _PlainTextLayout(
+          QuranVerseFlow(
             page: page,
             style: style,
+            goldColor: goldColor,
             onAyahPressed: onAyahPressed,
           ),
         ],
@@ -344,6 +350,130 @@ class _TajweedLayout extends StatelessWidget {
   }
 }
 
+/// A continuous, selectable-by-verse fallback. Original verse text is kept
+/// intact; the heading and verse marker are separate display elements.
+class QuranVerseFlow extends StatefulWidget {
+  const QuranVerseFlow({
+    super.key,
+    required this.page,
+    required this.style,
+    required this.goldColor,
+    required this.onAyahPressed,
+  });
+
+  final MushafPage page;
+  final TextStyle style;
+  final Color goldColor;
+  final ValueChanged<MushafAyah> onAyahPressed;
+
+  @override
+  State<QuranVerseFlow> createState() => _QuranVerseFlowState();
+}
+
+class _QuranVerseFlowState extends State<QuranVerseFlow> {
+  final Map<String, TapGestureRecognizer> _recognizers = {};
+  final Map<int, GlobalKey> _paragraphKeys = {};
+
+  void _openLongPressedVerse(List<MushafAyah> group, int chapter, Offset at) {
+    final paragraph = _paragraphKeys[chapter]?.currentContext?.findRenderObject();
+    if (paragraph is! RenderParagraph) return;
+    final position = paragraph.getPositionForOffset(paragraph.globalToLocal(at));
+    var offset = 0;
+    for (final ayah in group) {
+      offset += ayah.text.length + 1 + '﴿${_arabicNumber(ayah.number)}﴾ '.length;
+      if (position.offset < offset) {
+        widget.onAyahPressed(ayah);
+        return;
+      }
+    }
+  }
+
+  @override
+  void didUpdateWidget(QuranVerseFlow oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.page != widget.page) {
+      for (final recognizer in _recognizers.values) {
+        recognizer.dispose();
+      }
+      _recognizers.clear();
+      _paragraphKeys.clear();
+    }
+  }
+
+  @override
+  void dispose() {
+    for (final recognizer in _recognizers.values) {
+      recognizer.dispose();
+    }
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final groups = <List<MushafAyah>>[];
+    for (final ayah in widget.page.ayahs) {
+      if (groups.isEmpty || groups.last.last.chapterId != ayah.chapterId) {
+        groups.add(<MushafAyah>[]);
+      }
+      groups.last.add(ayah);
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final group in groups) ...[
+          if (group.first.number == 1)
+            Container(
+              margin: const EdgeInsets.symmetric(vertical: 10),
+              padding: const EdgeInsets.symmetric(vertical: 7),
+              decoration: BoxDecoration(
+                border: Border.symmetric(
+                  horizontal: BorderSide(color: widget.goldColor.withValues(alpha: 0.65)),
+                ),
+              ),
+              child: Text(
+                group.first.chapterId >= 1 && group.first.chapterId <= allSurahs.length
+                    ? allSurahs[group.first.chapterId - 1].displayName
+                    : widget.page.surahName,
+                textAlign: TextAlign.center,
+                style: widget.style.copyWith(
+                  fontSize: widget.style.fontSize! * 0.85,
+                  color: widget.goldColor,
+                ),
+              ),
+            ),
+          GestureDetector(
+            onLongPressStart: (details) => _openLongPressedVerse(
+              group, group.first.chapterId, details.globalPosition,
+            ),
+            child: Text.rich(
+            TextSpan(
+              style: widget.style,
+              children: [
+                for (final ayah in group) ...[
+                  TextSpan(
+                    text: '${ayah.text} ',
+                    recognizer: (_recognizers[ayah.key] ??= TapGestureRecognizer())
+                      ..onTap = () => widget.onAyahPressed(ayah),
+                  ),
+                  TextSpan(
+                    text: '﴿${_arabicNumber(ayah.number)}﴾ ',
+                    style: widget.style.copyWith(color: widget.goldColor),
+                    recognizer: _recognizers[ayah.key],
+                  ),
+                ],
+              ],
+            ),
+            textAlign: widget.page.number == 1 ? TextAlign.center : TextAlign.justify,
+            textDirection: TextDirection.rtl,
+            key: _paragraphKeys.putIfAbsent(group.first.chapterId, GlobalKey.new),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
 class _PlainTextLayout extends StatelessWidget {
   const _PlainTextLayout({
     required this.page,
@@ -357,23 +487,11 @@ class _PlainTextLayout extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        for (final ayah in page.ayahs)
-          InkWell(
-            onTap: () => onAyahPressed(ayah),
-            onLongPress: () => onAyahPressed(ayah),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 3),
-              child: Text(
-                '${ayah.text} ﴿${_arabicNumber(ayah.number)}﴾',
-                textAlign: TextAlign.center,
-                textDirection: TextDirection.rtl,
-                style: style,
-              ),
-            ),
-          ),
-      ],
+    return QuranVerseFlow(
+      page: page,
+      style: style,
+      goldColor: Theme.of(context).colorScheme.primary,
+      onAyahPressed: onAyahPressed,
     );
   }
 }

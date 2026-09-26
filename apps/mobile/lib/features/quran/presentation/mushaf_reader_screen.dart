@@ -691,6 +691,8 @@ class _MushafReaderScreenState extends ConsumerState<MushafReaderScreen>
                   pageFuture: _loadTextPage(init, _currentPage),
                   palette: palette,
                   onRiwayaPressed: () => _openSettings(init),
+                  onSearchPressed: () => _openGotoAyah(init),
+                  onIndexPressed: () => Navigator.of(context).maybePop(),
                 ),
                 Expanded(
                   child: _legacyImageRenderer &&
@@ -1025,6 +1027,8 @@ class _ReaderHeader extends StatelessWidget {
     required this.pageFuture,
     required this.palette,
     required this.onRiwayaPressed,
+    required this.onSearchPressed,
+    required this.onIndexPressed,
   });
 
   final int page;
@@ -1032,15 +1036,22 @@ class _ReaderHeader extends StatelessWidget {
   final Future<MushafPage>? pageFuture;
   final _ReaderPalette palette;
   final VoidCallback onRiwayaPressed;
+  final VoidCallback onSearchPressed;
+  final VoidCallback onIndexPressed;
 
   @override
   Widget build(BuildContext context) {
     final future = pageFuture;
     return SizedBox(
-      height: 64,
+      height: 62,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 8),
         child: Row(children: [
+          IconButton(
+            tooltip: 'فهرس السور',
+            onPressed: onIndexPressed,
+            icon: Icon(Icons.menu_book_outlined, color: palette.ink),
+          ),
           Expanded(
             child: future == null
                 ? Text(riwayaName,
@@ -1064,12 +1075,17 @@ class _ReaderHeader extends StatelessWidget {
             child: InkWell(
               onTap: onRiwayaPressed,
               child: Column(mainAxisSize: MainAxisSize.min, children: [
-                Text(
-                  'المصحف الشريف',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: palette.ink),
+                FutureBuilder<MushafPage>(
+                  future: future,
+                  builder: (context, snapshot) => Text(
+                    snapshot.data == null
+                        ? 'المصحف الشريف'
+                        : 'سورة ${snapshot.data!.surahName}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: palette.ink),
+                  ),
                 ),
                 Row(mainAxisSize: MainAxisSize.min, children: [
                   Text(riwayaName, style: TextStyle(fontSize: 11, color: palette.muted)),
@@ -1086,13 +1102,18 @@ class _ReaderHeader extends StatelessWidget {
               style: TextStyle(fontSize: 12, color: palette.muted),
             ),
           ),
+          IconButton(
+            tooltip: 'البحث في المصحف',
+            onPressed: onSearchPressed,
+            icon: Icon(Icons.search_rounded, color: palette.ink),
+          ),
         ]),
       ),
     );
   }
 }
 
-class _ReaderControls extends StatelessWidget {
+class _ReaderControls extends StatefulWidget {
   const _ReaderControls({
     required this.page,
     required this.maxPage,
@@ -1118,42 +1139,75 @@ class _ReaderControls extends StatelessWidget {
   final VoidCallback onBookmarksPressed;
 
   @override
+  State<_ReaderControls> createState() => _ReaderControlsState();
+}
+
+class _ReaderControlsState extends State<_ReaderControls> {
+  double? _draftPage;
+
+  @override
+  void didUpdateWidget(_ReaderControls oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.page != widget.page) _draftPage = null;
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final page = widget.page;
+    final maxPage = widget.maxPage;
+    final mode = widget.mode;
+    final dark = widget.dark;
     return Material(
       elevation: 8,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
         child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Slider(
-            value: page.toDouble().clamp(1, maxPage.toDouble()),
+          Row(children: [
+            IconButton(
+              tooltip: 'الصفحة السابقة',
+              onPressed: page > 1 ? () => widget.onPageChanged(page - 1) : null,
+              icon: const Icon(Icons.chevron_right_rounded),
+            ),
+            Expanded(child: Slider(
+            value: (_draftPage ?? page.toDouble()).clamp(1, maxPage.toDouble()),
             min: 1,
             max: maxPage.toDouble(),
             divisions: maxPage - 1,
-            label: '$page',
-            onChanged: (value) => onPageChanged(value.round()),
-          ),
+            label: '${(_draftPage ?? page.toDouble()).round()}',
+            onChanged: (value) => setState(() => _draftPage = value),
+            onChangeEnd: (value) {
+              setState(() => _draftPage = null);
+              widget.onPageChanged(value.round());
+            },
+          )),
+            IconButton(
+              tooltip: 'الصفحة التالية',
+              onPressed: page < maxPage ? () => widget.onPageChanged(page + 1) : null,
+              icon: const Icon(Icons.chevron_left_rounded),
+            ),
+          ]),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
               IconButton(
                 tooltip: 'الوضع الليلي',
-                onPressed: onDarkChanged,
+                onPressed: widget.onDarkChanged,
                 icon: Icon(dark ? Icons.light_mode : Icons.dark_mode),
               ),
               IconButton(
                 tooltip: 'الفواصل',
-                onPressed: onBookmarksPressed,
+                onPressed: widget.onBookmarksPressed,
                 icon: const Icon(Icons.bookmarks_outlined),
               ),
               IconButton(
                 tooltip: 'البحث والتنقل',
-                onPressed: onGotoPressed,
+                onPressed: widget.onGotoPressed,
                 icon: const Icon(Icons.search),
               ),
               PopupMenuButton<QuranReadingMode>(
                 tooltip: 'نوع عرض المصحف',
                 initialValue: mode,
-                onSelected: onModeChanged,
+                onSelected: widget.onModeChanged,
                 itemBuilder: (context) => [
                   for (final value in QuranReadingMode.values)
                     PopupMenuItem(
@@ -1174,7 +1228,7 @@ class _ReaderControls extends StatelessWidget {
               ),
               IconButton(
                 tooltip: 'الإعدادات',
-                onPressed: onSettingsPressed,
+                onPressed: widget.onSettingsPressed,
                 icon: const Icon(Icons.settings_outlined),
               ),
             ],
