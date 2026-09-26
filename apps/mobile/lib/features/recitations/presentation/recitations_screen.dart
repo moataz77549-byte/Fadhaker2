@@ -285,11 +285,9 @@ class ReciterDetailScreen extends ConsumerWidget {
                               tooltip: 'تشغيل',
                               onPressed: !playable
                                   ? null
-                                  : () => audioNotifier.playQuranTrack(
-                                        sName,
-                                        reciter.nameAr,
-                                        track.audioUrl,
-                                      ),
+                                  : () => _playTrack(audioNotifier, sName,
+                                        reciter.nameAr, track.audioUrl,
+                                        reciter.id, surah.number),
                             ),
                           ],
                         ),
@@ -305,6 +303,23 @@ class ReciterDetailScreen extends ConsumerWidget {
     );
   }
 
+  Future<File> _trackFile(String reciterId, int surahNumber) async {
+    final root = await getApplicationDocumentsDirectory();
+    final safeId = reciterId.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
+    return File('${root.path}/quran/recitations/$safeId/'
+        'surah_${surahNumber.toString().padLeft(3, '0')}.mp3');
+  }
+
+  Future<void> _playTrack(FadhkurAudioNotifier audio, String title,
+      String reciter, String url, String reciterId, int surahNumber) async {
+    final local = await _trackFile(reciterId, surahNumber);
+    if (await local.exists() && await local.length() > 0) {
+      await audio.playOfflineTrack(title, reciter, local.path);
+    } else {
+      await audio.playQuranTrack(title, reciter, url);
+    }
+  }
+
   Future<void> _downloadTrack(
     BuildContext context,
     String url,
@@ -316,17 +331,32 @@ class ReciterDetailScreen extends ConsumerWidget {
       messenger.showSnackBar(
         const SnackBar(content: Text('جارٍ تنزيل التلاوة...')),
       );
-      final response = await http
-          .get(Uri.parse(url))
-          .timeout(const Duration(seconds: 90));
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw HttpException('HTTP ${response.statusCode}');
+      final uri = Uri.tryParse(url);
+      if (uri == null || uri.scheme != 'https') throw const HttpException('Invalid audio URL');
+      final file = await _trackFile(reciterId, surahNumber);
+      await file.parent.create(recursive: true);
+      final partial = File('${file.path}.part');
+      final client = http.Client();
+      try {
+        final request = http.Request('GET', uri);
+        final response = await client.send(request).timeout(const Duration(seconds: 15));
+        if (response.statusCode != 200) throw HttpException('HTTP ${response.statusCode}');
+        // Stream to disk rather than holding a full surah in memory. The
+        // atomic rename keeps interrupted files out of offline playback.
+        final sink = partial.openWrite();
+        try {
+          await response.stream.timeout(const Duration(seconds: 30))
+              .pipe(sink);
+        } finally {
+          await sink.close();
+        }
+        if (await partial.length() == 0) throw const HttpException('Empty audio');
+        if (await file.exists()) await file.delete();
+        await partial.rename(file.path);
+      } finally {
+        client.close();
+        if (await partial.exists()) await partial.delete();
       }
-      final root = await getApplicationDocumentsDirectory();
-      final directory = Directory('${root.path}/quran/recitations/$reciterId');
-      await directory.create(recursive: true);
-      final file = File('${directory.path}/surah_${surahNumber.toString().padLeft(3, '0')}.mp3');
-      await file.writeAsBytes(response.bodyBytes, flush: true);
       messenger.showSnackBar(
         SnackBar(content: Text('تم تنزيل التلاوة في الجهاز')),
       );
