@@ -6,6 +6,14 @@ import 'package:timezone/timezone.dart' as tz;
 import '../../features/prayer/domain/prayer_times.dart';
 import '../../features/reminders/domain/personal_reminder.dart';
 
+/// Custom reminder offset applies to the alarm, not the calculated timetable.
+DateTime effectivePrayerAlarmTime(DateTime prayerTime, int offsetMinutes) {
+  if (offsetMinutes < -30 || offsetMinutes > 30) {
+    throw ArgumentError.value(offsetMinutes, 'offsetMinutes');
+  }
+  return prayerTime.add(Duration(minutes: offsetMinutes));
+}
+
 /// Android notification channels used by the offline scheduler.
 class NotificationChannels {
   static const adhan = AndroidNotificationChannel(
@@ -23,6 +31,18 @@ class NotificationChannels {
     importance: Importance.high,
     playSound: true,
   );
+
+  /// Android 8+ keeps a channel's sound immutable. Give each muezzin a
+  /// separate channel so changing the selection actually changes the alarm.
+  static AndroidNotificationChannel adhanForSound(String sound) =>
+      AndroidNotificationChannel(
+        'fadhkur_adhan_$sound',
+        'الأذان — ${sound == 'adhan_madinah' ? 'المدينة' : sound == 'adhan_short' ? 'قصير' : 'مكة'}',
+        description: 'تنبيه الصلاة بصوت المؤذن المختار',
+        importance: Importance.max,
+        playSound: true,
+        sound: RawResourceAndroidNotificationSound(sound),
+      );
 }
 
 /// Schedules exact, doze-proof local notifications: Adhan alarms (Tier 2) and
@@ -117,10 +137,14 @@ class LocalAlarmScheduler {
     },
     String fajrSound = 'adhan_madinah',
     String regularSound = 'adhan_makkah',
+    int offsetMinutes = 0,
     DateTime? from,
     int days = 5,
     bool requestPermissions = true,
   }) async {
+    if (offsetMinutes < -30 || offsetMinutes > 30) {
+      throw ArgumentError.value(offsetMinutes, 'offsetMinutes');
+    }
     await initialize();
     if (!await _ensureAndroidPermissions(
       requestIfMissing: requestPermissions,
@@ -149,7 +173,7 @@ class LocalAlarmScheduler {
 
       for (final prayer in Prayer.values) {
         if (!prayer.isAdhan || !enabledPrayers.contains(prayer)) continue;
-        final at = times.timeFor(prayer);
+        final at = effectivePrayerAlarmTime(times.timeFor(prayer), offsetMinutes);
         if (!at.isAfter(start)) continue;
 
         final sound = prayer == Prayer.fajr ? fajrSound : regularSound;
@@ -159,11 +183,38 @@ class LocalAlarmScheduler {
           body: 'اللهم اجعلنا من المحافظين على الصلاة',
           when: at,
           payload: '/prayer-times',
-          channel: NotificationChannels.adhan,
+          channel: NotificationChannels.adhanForSound(sound),
           soundResource: sound,
         );
       }
     }
+  }
+
+  /// User initiated sound/notification check; never schedules a prayer alarm.
+  Future<void> previewAdhan(String sound) async {
+    await initialize();
+    if (!await _ensureAndroidPermissions(requestIfMissing: true)) {
+      throw StateError('notification_permission_required');
+    }
+    final channel = NotificationChannels.adhanForSound(sound);
+    await plugin.show(
+      499999,
+      'تجربة تنبيه الأذان',
+      'سيعمل المؤذن المختار عند وقت التنبيه المحدد.',
+      NotificationDetails(
+        android: AndroidNotificationDetails(
+          channel.id, channel.name,
+          channelDescription: channel.description,
+          importance: Importance.max,
+          priority: Priority.high,
+          category: AndroidNotificationCategory.alarm,
+          playSound: true,
+          sound: RawResourceAndroidNotificationSound(sound),
+          audioAttributesUsage: AudioAttributesUsage.alarm,
+        ),
+      ),
+      payload: '/prayer-times',
+    );
   }
 
   Future<void> cancelPrayerAlarms({int days = 5}) async {
@@ -261,7 +312,7 @@ class LocalAlarmScheduler {
       channelDescription: channel.description,
       importance: channel.importance,
       priority: Priority.high,
-      category: channel.id == NotificationChannels.adhan.id
+      category: channel.id.startsWith('fadhkur_adhan_') || channel.id == NotificationChannels.adhan.id
           ? AndroidNotificationCategory.alarm
           : AndroidNotificationCategory.reminder,
       fullScreenIntent: false,
@@ -269,7 +320,7 @@ class LocalAlarmScheduler {
       sound: soundResource == null
           ? null
           : RawResourceAndroidNotificationSound(soundResource),
-      audioAttributesUsage: channel.id == NotificationChannels.adhan.id
+      audioAttributesUsage: channel.id.startsWith('fadhkur_adhan_') || channel.id == NotificationChannels.adhan.id
           ? AudioAttributesUsage.alarm
           : AudioAttributesUsage.notification,
     );

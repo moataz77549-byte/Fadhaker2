@@ -1,7 +1,11 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path_provider/path_provider.dart';
 import '../../../core/services/audio_playback_service.dart';
 import '../../../core/services/quran_download_service.dart';
+import '../../quran/data/surah_metadata.dart';
 
 /// شاشة التنزيلات — تعرض مهام [QuranDownloadManager] مباشرة:
 /// طابور، إيقاف مؤقت، استئناف، إعادة محاولة، تقدّم، إلغاء، حذف،
@@ -23,11 +27,15 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return DefaultTabController(length: 2, child: Scaffold(
       appBar: AppBar(
         title: const Text('التنزيلات والاستماع دون اتصال'),
+        bottom: const TabBar(tabs: [
+          Tab(text: 'تنزيلات القرآن'),
+          Tab(text: 'المصاحف الصوتية'),
+        ]),
       ),
-      body: StreamBuilder<List<DownloadJob>>(
+      body: TabBarView(children: [StreamBuilder<List<DownloadJob>>(
         stream: quranDownloadManager.jobsStream,
         initialData: quranDownloadManager.jobs,
         builder: (context, snapshot) {
@@ -54,9 +62,80 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
             itemBuilder: (ctx, i) => _JobCard(job: jobs[i]),
           );
         },
-      ),
-    );
+      ), const _DownloadedRecitationsTab()]),
+    ));
   }
+}
+
+class _DownloadedRecitationsTab extends ConsumerStatefulWidget {
+  const _DownloadedRecitationsTab();
+
+  @override
+  ConsumerState<_DownloadedRecitationsTab> createState() => _DownloadedRecitationsTabState();
+}
+
+class _DownloadedRecitationsTabState extends ConsumerState<_DownloadedRecitationsTab> {
+  late Future<List<File>> _files = _scan();
+
+  Future<List<File>> _scan() async {
+    final root = await getApplicationDocumentsDirectory();
+    final directory = Directory('${root.path}/quran/recitations');
+    if (!await directory.exists()) return const [];
+    final result = <File>[];
+    await for (final entry in directory.list(recursive: true, followLinks: false)) {
+      if (entry is File && entry.path.endsWith('.mp3') && await entry.length() > 0) {
+        result.add(entry);
+      }
+    }
+    result.sort((a, b) => a.path.compareTo(b.path));
+    return result;
+  }
+
+  @override
+  Widget build(BuildContext context) => FutureBuilder<List<File>>(
+    future: _files,
+    builder: (context, snapshot) {
+      if (snapshot.hasError) {
+        return Center(child: TextButton(
+          onPressed: () => setState(() => _files = _scan()),
+          child: const Text('تعذّر فتح الملفات. إعادة المحاولة'),
+        ));
+      }
+      if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+      final files = snapshot.data!;
+      if (files.isEmpty) return const Center(child: Text('لا توجد تلاوات محملة بعد.'));
+      return ListView.builder(
+        itemCount: files.length,
+        itemBuilder: (context, index) {
+          final file = files[index];
+          final match = RegExp(r'surah_(\d{3})\.mp3$').firstMatch(file.path);
+          final number = int.tryParse(match?.group(1) ?? '') ?? 0;
+          final surahName = number >= 1 && number <= allSurahs.length
+              ? allSurahs[number - 1].displayName : 'سورة $number';
+          final folder = file.parent.path.split(Platform.pathSeparator).last;
+          return ListTile(
+            leading: const Icon(Icons.music_note_outlined),
+            title: Text(surahName),
+            subtitle: Text('مصحف $folder • محفوظ على الجهاز'),
+            trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+              IconButton(
+                tooltip: 'تشغيل دون اتصال', icon: const Icon(Icons.play_arrow),
+                onPressed: () => ref.read(audioPlaybackProvider.notifier)
+                    .playOfflineTrack(surahName, folder, file.path),
+              ),
+              IconButton(
+                tooltip: 'حذف من الجهاز', icon: const Icon(Icons.delete_outline),
+                onPressed: () async {
+                  await file.delete();
+                  if (mounted) setState(() => _files = _scan());
+                },
+              ),
+            ]),
+          );
+        },
+      );
+    },
+  );
 }
 
 class _JobCard extends ConsumerWidget {

@@ -84,6 +84,8 @@ class RadioStation extends RadioStationModel {
   final String streamType;
   final StationKind kind;
   final int sortOrder;
+  final String? externalKey;
+  final String? sourceUrl;
 
   const RadioStation({
     required super.id,
@@ -98,6 +100,8 @@ class RadioStation extends RadioStationModel {
     this.streamType = 'MP3',
     this.kind = StationKind.continuous,
     this.sortOrder = 0,
+    this.externalKey,
+    this.sourceUrl,
   });
 
   /// بناء من صف Supabase (app.stations) مع علاقة categories المضمّنة.
@@ -132,6 +136,8 @@ class RadioStation extends RadioStationModel {
       streamType: '${row['stream_type'] ?? 'MP3'}'.toUpperCase(),
       kind: stationKindFrom(categorySlug: categorySlug, metadata: metadata),
       sortOrder: (row['sort_order'] as num?)?.toInt() ?? 0,
+      externalKey: row['external_key']?.toString(),
+      sourceUrl: row['source_url']?.toString(),
     );
   }
 
@@ -147,6 +153,8 @@ class RadioStation extends RadioStationModel {
         'is_featured': isFeatured,
         'sort_order': sortOrder,
         'bitrate_kbps': bitrateKbps,
+        'external_key': externalKey,
+        'source_url': sourceUrl,
       };
 
   factory RadioStation.fromJson(Map<String, dynamic> json) {
@@ -166,6 +174,8 @@ class RadioStation extends RadioStationModel {
       streamType: '${json['stream_type'] ?? 'MP3'}',
       kind: kind,
       sortOrder: (json['sort_order'] as num?)?.toInt() ?? 0,
+      externalKey: json['external_key']?.toString(),
+      sourceUrl: json['source_url']?.toString(),
     );
   }
 

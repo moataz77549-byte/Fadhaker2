@@ -54,9 +54,10 @@ class AboutAndSourcesScreen extends StatelessWidget {
             url: 'https://qurancomplex.gov.sa/',
           ),
           const _SourceTile(
-            title: 'إذاعات MP3Quran',
-            detail: 'روابط بث من API الرسمي. أجاز مالك التطبيق عرض روابط API الرسمية داخل التطبيق، '
-                'ولا تُعاد استضافة ملفات الصوت. تُخفى المحطات غير السليمة.',
+            title: 'القراء والمصاحف والإذاعات والقنوات — MP3Quran.net',
+            detail: 'تُجلب قوائم القراء والمصاحف والسور والإذاعات والقنوات من API v3 الرسمي. '
+                'يُحدّث رابط البث قبل إعادة المحاولة؛ تُحفظ البيانات الوصفية والتلاوات التي يحمّلها المستخدم محليًا. '
+                'لا تعني إتاحة الرابط الإذن بإعادة استضافة الصوت أو تسجيل البث.',
             url: 'https://www.mp3quran.net/ar/api',
           ),
           const _SourceTile(
@@ -104,6 +105,11 @@ class AboutAndSourcesScreen extends StatelessWidget {
           ),
           const SizedBox(height: 24),
           const Divider(),
+          const Text(
+            'حقوق الطبع والنشر لمعتز العلقمي - اليمن - تعز - 2026 م .',
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 12),
           const Text(
             'تُحفظ العلامات المرجعية وتفضيلات القراءة محليًا. '
             'قد يتطلب تشغيل الصوت والمحتوى الجديد اتصالًا بالإنترنت.',
