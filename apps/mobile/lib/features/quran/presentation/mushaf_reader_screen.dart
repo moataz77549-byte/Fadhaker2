@@ -148,12 +148,42 @@ class _MushafReaderScreenState extends State<MushafReaderScreen> {
 
   void _retryTextPage(int page) => setState(() => _textPages.remove(page));
 
+  void _prefetchAdjacent(_ReaderInit init, int page) {
+    _textPages.removeWhere((cachedPage, _) => (cachedPage - page).abs() > 2);
+    for (final candidate in [page - 1, page + 1]) {
+      if (candidate >= 1 && candidate <= QuranNavigation.quranFoundationTextPages) {
+        unawaited(_loadTextPage(init, candidate));
+      }
+    }
+  }
+
+  Future<void> _openVerseKey(_ReaderInit init, String verseKey) async {
+    try {
+      final parsed = QuranNavigation.parseAyahKey(verseKey);
+      final page = await _apiRepo.lookupPage(
+        chapter: parsed.chapter,
+        verse: parsed.verse,
+      );
+      if (!mounted) return;
+      setState(() => _currentVerseKey = verseKey);
+      await _jumpToPage(init, page);
+      await _persistProgress(init, page);
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('تعذّر الانتقال إلى الآية المطلوبة')),
+        );
+      }
+    }
+  }
+
   void _onPageChanged(_ReaderInit init, int index) {
     final page = QuranNavigation.indexToPage(index);
     setState(() {
       _currentPage = page;
       _currentVerseKey = null;
     });
+    _prefetchAdjacent(init, page);
     unawaited(_persistProgress(init, page));
   }
 
@@ -467,6 +497,7 @@ class _MushafReaderScreenState extends State<MushafReaderScreen> {
                               onPageChanged: (i) => _onPageChanged(init, i),
                               onRetry: _retryTextPage,
                               onAyahPressed: (a) => _showAyahActions(init, a),
+                              onVerseKeyRequested: (key) => _openVerseKey(init, key),
                               topicRepository: _topicRepo,
                             ),
                 ),
