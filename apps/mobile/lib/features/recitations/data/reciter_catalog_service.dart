@@ -246,7 +246,7 @@ class ReciterCatalogService {
           statusCode: response.statusCode);
     }
     try {
-      final decoded = jsonDecode(response.body);
+      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
       if (decoded is! List) {
         throw const ReciterCatalogException(ReciterCatalogFailure.malformed);
       }
