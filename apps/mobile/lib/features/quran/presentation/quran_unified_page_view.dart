@@ -24,6 +24,7 @@ class QuranUnifiedPageView extends StatelessWidget {
     required this.onPageChanged,
     required this.onRetry,
     required this.onAyahPressed,
+    required this.onVerseKeyRequested,
     required this.topicRepository,
   });
 
@@ -41,6 +42,7 @@ class QuranUnifiedPageView extends StatelessWidget {
   final ValueChanged<int> onPageChanged;
   final ValueChanged<int> onRetry;
   final ValueChanged<MushafAyah> onAyahPressed;
+  final ValueChanged<String> onVerseKeyRequested;
   final QuranTopicRepository topicRepository;
 
   @override
@@ -80,6 +82,7 @@ class QuranUnifiedPageView extends StatelessWidget {
               fontSize: fontSize,
               lineHeight: lineHeight,
               onAyahPressed: onAyahPressed,
+              onVerseKeyRequested: onVerseKeyRequested,
               topicRepository: topicRepository,
             );
           },
@@ -102,6 +105,7 @@ class _PageBody extends StatelessWidget {
     required this.fontSize,
     required this.lineHeight,
     required this.onAyahPressed,
+    required this.onVerseKeyRequested,
     required this.topicRepository,
   });
 
@@ -116,6 +120,7 @@ class _PageBody extends StatelessWidget {
   final double fontSize;
   final double lineHeight;
   final ValueChanged<MushafAyah> onAyahPressed;
+  final ValueChanged<String> onVerseKeyRequested;
   final QuranTopicRepository topicRepository;
 
   TextStyle get _baseStyle => TextStyle(
@@ -165,6 +170,7 @@ class _PageBody extends StatelessWidget {
                     mutedColor: mutedColor,
                     topicRepository: topicRepository,
                     onAyahPressed: onAyahPressed,
+                    onVerseKeyRequested: onVerseKeyRequested,
                   ),
                 QuranReadingMode.text => _PlainTextLayout(
                     page: page,
@@ -361,6 +367,7 @@ class _ThematicLayout extends StatelessWidget {
     required this.mutedColor,
     required this.topicRepository,
     required this.onAyahPressed,
+    required this.onVerseKeyRequested,
   });
 
   final MushafPage page;
@@ -370,6 +377,7 @@ class _ThematicLayout extends StatelessWidget {
   final Color mutedColor;
   final QuranTopicRepository topicRepository;
   final ValueChanged<MushafAyah> onAyahPressed;
+  final ValueChanged<String> onVerseKeyRequested;
 
   @override
   Widget build(BuildContext context) {
@@ -409,6 +417,7 @@ class _ThematicLayout extends StatelessWidget {
                 pageColor: pageColor,
                 topicRepository: topicRepository,
                 onAyahPressed: onAyahPressed,
+                onVerseKeyRequested: onVerseKeyRequested,
               ),
           ],
         );
@@ -472,6 +481,7 @@ class _ThematicAyah extends StatelessWidget {
     required this.pageColor,
     required this.topicRepository,
     required this.onAyahPressed,
+    required this.onVerseKeyRequested,
   });
 
   final MushafAyah ayah;
@@ -481,6 +491,7 @@ class _ThematicAyah extends StatelessWidget {
   final Color pageColor;
   final QuranTopicRepository topicRepository;
   final ValueChanged<MushafAyah> onAyahPressed;
+  final ValueChanged<String> onVerseKeyRequested;
 
   @override
   Widget build(BuildContext context) {
@@ -538,6 +549,67 @@ class _ThematicAyah extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  Future<void> _showRelatedVerses(
+    BuildContext context,
+    String title,
+    List<String> keys, {
+    bool focusSearch = false,
+  }) async {
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: DraggableScrollableSheet(
+          expand: false,
+          initialChildSize: focusSearch ? 0.78 : 0.62,
+          minChildSize: 0.35,
+          maxChildSize: 0.92,
+          builder: (context, controller) => Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Text(
+                  focusSearch ? 'نتائج موضوع «$title»' : 'الآيات المتعلقة بـ «$title»',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+                ),
+              ),
+              const SizedBox(height: 6),
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 16),
+                child: Text(
+                  'هذه نتائج تصنيف موضوعي، وليست مجرد آيات تحتوي كلمة الموضوع.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 11, color: Colors.grey),
+                ),
+              ),
+              const Divider(),
+              Expanded(
+                child: ListView.builder(
+                  controller: controller,
+                  itemCount: keys.length,
+                  itemBuilder: (context, index) {
+                    final key = keys[index];
+                    return ListTile(
+                      leading: const Icon(Icons.menu_book_outlined),
+                      title: Text('الآية $key'),
+                      trailing: const Icon(Icons.arrow_forward_ios, size: 14),
+                      onTap: () => Navigator.pop(context, key),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (selected != null) {
+      onVerseKeyRequested(selected);
+    }
   }
 
   Future<void> _showTopicDetails(BuildContext context) async {
@@ -598,10 +670,37 @@ class _ThematicAyah extends StatelessWidget {
                                     textDirection: TextDirection.rtl,
                                   ),
                                 const SizedBox(height: 8),
-                                OutlinedButton.icon(
-                                  onPressed: keys.isEmpty ? null : () {},
-                                  icon: const Icon(Icons.search),
-                                  label: Text('البحث في موضوع «${topic.titleAr}»'),
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: OutlinedButton.icon(
+                                        onPressed: keys.isEmpty
+                                            ? null
+                                            : () => _showRelatedVerses(
+                                                  context,
+                                                  topic.titleAr,
+                                                  keys,
+                                                ),
+                                        icon: const Icon(Icons.list_alt_outlined),
+                                        label: const Text('عرض الآيات المتعلقة'),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: FilledButton.tonalIcon(
+                                        onPressed: keys.isEmpty
+                                            ? null
+                                            : () => _showRelatedVerses(
+                                                  context,
+                                                  topic.titleAr,
+                                                  keys,
+                                                  focusSearch: true,
+                                                ),
+                                        icon: const Icon(Icons.search),
+                                        label: const Text('البحث في الموضوع'),
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ],
                             );
