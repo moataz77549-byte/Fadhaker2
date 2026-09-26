@@ -52,4 +52,40 @@ void main() {
       expect(await repo.readingMode(), mode);
     }
   });
+
+  test('Madani → Tajweed → Thematic → Text → Madani keeps one QuranLocation',
+      () async {
+    final repo = QuranReadingStateRepository();
+    const location = QuranLocation(
+      pageNumber: 42,
+      surahNumber: 2,
+      ayahNumber: 255,
+      verseKey: '2:255',
+    );
+    await repo.saveLastLocation('hafs', location);
+
+    for (final mode in const [
+      QuranReadingMode.madani,
+      QuranReadingMode.tajweed,
+      QuranReadingMode.thematic,
+      QuranReadingMode.text,
+      QuranReadingMode.madani,
+    ]) {
+      await repo.saveReadingMode(mode);
+      expect(await repo.lastLocation('hafs'), location);
+    }
+  });
+
+  test('Quran page boundaries remain valid for 1, 2, middle and 604', () {
+    for (final page in const [1, 2, 302, 604]) {
+      final location = QuranLocation(
+        pageNumber: page,
+        surahNumber: page == 604 ? 114 : 1,
+        ayahNumber: 1,
+        verseKey: page == 604 ? '114:1' : '1:1',
+      );
+      expect(QuranLocation.fromJson(location.toJson()).pageNumber, page);
+    }
+  });
+
 }
