@@ -73,8 +73,14 @@ class RadioCatalogService {
   /// Resolve a station again after playback failure. A removed station is
   /// not resurrected from stale cache; callers may try its approved fallback.
   Future<RadioStation?> refreshStation(String id) async {
-    final remote = await _fetchRemote(timeout: const Duration(seconds: 8));
-    await _saveCache(remote);
+    List<RadioStation> remote;
+    try {
+      remote = await _fetchRemote(timeout: const Duration(seconds: 8));
+      await _saveCache(remote);
+    } catch (_) {
+      // The official MP3Quran API may still work when Supabase is unavailable.
+      remote = await _loadCache();
+    }
     for (final station in _mergeWithBuiltin(remote)) {
       if (station.id != id) continue;
       if (station.sourceUrl != '${Mp3QuranApi.baseUrl}/radios?language=ar' ||
