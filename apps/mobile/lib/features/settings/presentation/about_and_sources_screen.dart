@@ -105,6 +105,11 @@ class AboutAndSourcesScreen extends StatelessWidget {
           const SizedBox(height: 24),
           const Divider(),
           const Text(
+            'حقوق الطبع والنشر لمعتز العلقمي - اليمن - تعز - 2026 م .',
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 12),
+          const Text(
             'تُحفظ العلامات المرجعية وتفضيلات القراءة محليًا. '
             'قد يتطلب تشغيل الصوت والمحتوى الجديد اتصالًا بالإنترنت.',
             textAlign: TextAlign.center,
