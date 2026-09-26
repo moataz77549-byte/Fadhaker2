@@ -318,6 +318,21 @@ void main() {
       expect(await repo.lastPage('warsh'), 100);
     });
 
+    test('موقع الآية يبقى عبر تبديل أوضاع المصحف وترحيل الصفحة القديمة', () async {
+      final repo = QuranReadingStateRepository();
+      await repo.saveLastPage('hafs', 42);
+      expect((await repo.lastLocation('hafs'))?.page, 42);
+      expect((await repo.lastLocation('hafs'))?.verseKey, isNull);
+      await repo.saveLocation('hafs', const QuranLocation(page: 42, verseKey: '2:255'));
+      for (final mode in QuranReadingMode.values) {
+        await repo.saveReadingMode(mode);
+        expect(await repo.readingMode(), mode);
+        expect((await repo.lastLocation('hafs'))?.page, 42);
+        expect((await repo.lastLocation('hafs'))?.verseKey, '2:255');
+      }
+      expect(await repo.lastLocation('warsh'), isNull);
+    });
+
     test('مصدر التفسير الافتراضي هو الميسر (16)', () async {
       final repo = QuranReadingStateRepository();
       expect(await repo.tafsirSourceId(), 16);
