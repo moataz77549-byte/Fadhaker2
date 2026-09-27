@@ -44,6 +44,12 @@ const ALLOWED_ROUTES = new Set([
   '/adhkar',
   '/prayer-times',
   '/custom-reminders',
+  '/favorites',
+  '/tasbih',
+  '/allah-names',
+  '/daily-hadith',
+  '/khatma',
+  '/learning',
   '/settings',
 ]);
 

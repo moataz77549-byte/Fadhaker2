@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../core/services/notification_service.dart';
 
 import '../domain/personal_reminder.dart';
 import '../data/personal_reminder_repository.dart';
+import '../data/reminder_sound_picker.dart';
 
 /// Tier 3: user-managed personal reminders ("ورد يومي").
 class PersonalRemindersScreen extends ConsumerWidget {
@@ -55,20 +57,31 @@ class PersonalRemindersScreen extends ConsumerWidget {
                   leading: Switch(
                     value: reminder.enabled,
                     onChanged: (value) async {
-                      await ref
-                          .read(personalReminderRepositoryProvider)
-                          .save(reminder.copyWith(enabled: value));
-                      ref.invalidate(personalRemindersProvider);
+                      try {
+                        await ref.read(personalReminderRepositoryProvider)
+                            .save(reminder.copyWith(enabled: value));
+                        ref.invalidate(personalRemindersProvider);
+                        if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text(value ? 'تم تفعيل المنبه وجدولته' :
+                              'تم إيقاف المنبه وإلغاء تنبيهه')));
+                      } catch (error) {
+                        if (context.mounted) _showError(context, error);
+                      }
                     },
                   ),
                   trailing: IconButton(
                     icon: const Icon(Icons.delete_outline),
                     tooltip: 'حذف',
                     onPressed: () async {
-                      await ref
-                          .read(personalReminderRepositoryProvider)
-                          .delete(reminder);
-                      ref.invalidate(personalRemindersProvider);
+                      try {
+                        await ref.read(personalReminderRepositoryProvider)
+                            .delete(reminder);
+                        ref.invalidate(personalRemindersProvider);
+                        if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('حُذف المنبه وأُلغي تنبيهه')));
+                      } catch (error) {
+                        if (context.mounted) _showError(context, error);
+                      }
                     },
                   ),
                   onTap: () => _openEditor(context, ref, reminder),
@@ -92,8 +105,22 @@ class PersonalRemindersScreen extends ConsumerWidget {
       builder: (_) => _ReminderEditor(initial: existing),
     );
     if (result == null) return;
-    await ref.read(personalReminderRepositoryProvider).save(result);
-    ref.invalidate(personalRemindersProvider);
+    try {
+      await ref.read(personalReminderRepositoryProvider).save(result);
+      ref.invalidate(personalRemindersProvider);
+      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(result.enabled ? 'حُفظ المنبه وجدولته للصوت والوقت المحددين' :
+            'حُفظ المنبه متوقفًا'),
+      ));
+    } catch (error) {
+      if (context.mounted) _showError(context, error);
+    }
+  }
+
+  void _showError(BuildContext context, Object error) {
+    final message = error is StateError ? error.message.toString() :
+        'تعذّر ضبط المنبه. تحقق من إذن الإشعارات والمنبهات الدقيقة ثم حاول مجددًا.';
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 }
 
@@ -115,6 +142,15 @@ class _ReminderEditorState extends State<_ReminderEditor> {
   );
   late Set<int> _weekdays = {...?widget.initial?.weekdays};
   late ReminderSound _sound = widget.initial?.sound ?? ReminderSound.soft;
+  String? _customSoundUri;
+  String? _customSoundName;
+
+  @override
+  void initState() {
+    super.initState();
+    _customSoundUri = widget.initial?.customSoundPath;
+    if (_customSoundUri != null) _customSoundName = 'ملف الصوت المحفوظ';
+  }
 
   static const _dayLabels = {
     7: 'الأحد',
@@ -209,9 +245,55 @@ class _ReminderEditorState extends State<_ReminderEditor> {
               onChanged: (value) =>
                   setState(() => _sound = value ?? ReminderSound.soft),
             ),
+            if (_sound == ReminderSound.recorded) ...[
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: () async {
+                  try {
+                    final selected = await const ReminderSoundPicker().pick();
+                    if (selected != null && mounted) setState(() {
+                      _customSoundUri = selected.uri;
+                      _customSoundName = selected.name;
+                    });
+                  } catch (error) {
+                    if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('تعذّر اختيار الملف: $error')));
+                  }
+                },
+                icon: const Icon(Icons.audio_file_outlined),
+                label: Text(_customSoundName ?? 'اختر ملف صوت من الهاتف'),
+              ),
+              const Text('يُنسخ الصوت إلى مساحة التطبيق ليعمل المنبه دون إنترنت. '
+                  'الحد الأقصى 20 ميجابايت.'),
+            ],
+            TextButton.icon(
+              onPressed: () async {
+                try {
+                  await localAlarmScheduler.previewPersonalReminder(
+                    PersonalReminder(id: widget.initial?.id ?? 0,
+                      title: _titleController.text.trim().isEmpty ? 'تذكير' :
+                          _titleController.text.trim(),
+                      hour: _time.hour, minute: _time.minute,
+                      sound: _sound, customSoundPath: _customSoundUri),
+                  );
+                  if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                    content: Text('أُرسل إشعار تجربة. تحقق من صوت الجهاز وإعدادات القناة.')));
+                } catch (error) {
+                  if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('تعذّرت تجربة الصوت: $error')));
+                }
+              },
+              icon: const Icon(Icons.volume_up_outlined),
+              label: const Text('تجربة صوت المنبه'),
+            ),
             const SizedBox(height: 16),
             FilledButton(
               onPressed: () {
+                if (_sound == ReminderSound.recorded && _customSoundUri == null) {
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                      content: Text('اختر ملف صوت للمنبه أولًا')));
+                  return;
+                }
                 final title = _titleController.text.trim();
                 Navigator.of(context).pop(
                   PersonalReminder(
@@ -221,6 +303,8 @@ class _ReminderEditorState extends State<_ReminderEditor> {
                     minute: _time.minute,
                     weekdays: _weekdays,
                     sound: _sound,
+                    customSoundPath: _sound == ReminderSound.recorded
+                        ? _customSoundUri : null,
                     enabled: widget.initial?.enabled ?? true,
                   ),
                 );

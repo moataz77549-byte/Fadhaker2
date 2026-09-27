@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
@@ -54,6 +53,13 @@ class PersonalReminderRepository {
   Future<PersonalReminder> save(PersonalReminder reminder) async {
     final db = await _database();
     var stored = reminder;
+    PersonalReminder? previous;
+
+    if (reminder.id != 0) {
+      final rows = await db.query('personal_reminders', where: 'id = ?',
+          whereArgs: [reminder.id], limit: 1);
+      if (rows.isNotEmpty) previous = PersonalReminder.fromMap(rows.first);
+    }
 
     if (reminder.id == 0) {
       final id = await db.insert(
@@ -72,23 +78,28 @@ class PersonalReminderRepository {
     try {
       await _scheduler.schedulePersonalReminder(stored);
     } catch (error) {
-      debugPrint('Reminder schedule notice: $error');
+      // A reminder is only shown as enabled when its alarm was actually
+      // scheduled. Undo this write if Android denied a required permission.
+      if (previous == null) {
+        await db.delete('personal_reminders', where: 'id = ?', whereArgs: [stored.id]);
+      } else {
+        await db.insert('personal_reminders', previous.toMap(),
+            conflictAlgorithm: ConflictAlgorithm.replace);
+        try { await _scheduler.schedulePersonalReminder(previous); } catch (_) {}
+      }
+      rethrow;
     }
     return stored;
   }
 
   Future<void> delete(PersonalReminder reminder) async {
     final db = await _database();
+    await _scheduler.cancelPersonalReminder(reminder);
     await db.delete(
       'personal_reminders',
       where: 'id = ?',
       whereArgs: [reminder.id],
     );
-    try {
-      await _scheduler.cancelPersonalReminder(reminder);
-    } catch (error) {
-      debugPrint('Reminder cancel notice: $error');
-    }
   }
 
   /// Re-arms every stored reminder; safe to call on each app start.

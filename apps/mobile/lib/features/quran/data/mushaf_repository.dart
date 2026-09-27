@@ -28,13 +28,22 @@ class MushafRepository {
       limit: 1,
     );
     if (cached.isNotEmpty) {
-      await database.update(
-        'mushaf_pages',
-        {'updated_at': DateTime.now().millisecondsSinceEpoch},
-        where: 'cache_key = ?',
-        whereArgs: [cacheKey],
-      );
-      return MushafPage.decode(cached.first['payload'] as String);
+      try {
+        final decoded = MushafPage.decode(cached.first['payload'] as String);
+        await database.update(
+          'mushaf_pages',
+          {'updated_at': DateTime.now().millisecondsSinceEpoch},
+          where: 'cache_key = ?',
+          whereArgs: [cacheKey],
+        );
+        return decoded;
+      } catch (_) {
+        await database.delete(
+          'mushaf_pages',
+          where: 'cache_key = ?',
+          whereArgs: [cacheKey],
+        );
+      }
     }
     final result = await _api.getPageText(riwaya: riwaya, page: validated);
     await database.insert(
@@ -64,7 +73,7 @@ class MushafRepository {
   /// Searches only pages previously opened on this device. Quran text is
   /// compared exactly as stored; no normalization touches the source text.
   Future<List<QuranSearchResult>> searchCachedText(String query) async {
-    final needle = query.trim();
+    final needle = _normalizeArabicForSearch(query);
     if (needle.length < 2) return const [];
     final database = await _openDatabase();
     final rows = await database.query('mushaf_pages', columns: ['payload']);
@@ -77,7 +86,7 @@ class MushafRepository {
         continue;
       }
       for (final ayah in page.ayahs) {
-        if (!ayah.text.contains(needle)) continue;
+        if (!_normalizeArabicForSearch(ayah.text).contains(needle)) continue;
         results.add(QuranSearchResult(
           type: QuranSearchResultType.verseText,
           title: ayah.text,
@@ -90,6 +99,16 @@ class MushafRepository {
     }
     return results;
   }
+
+  String _normalizeArabicForSearch(String input) => input
+      .trim()
+      .replaceAll(RegExp(r'[\u064B-\u065F\u0670\u06D6-\u06ED]'), '')
+      .replaceAll('\u0640', '')
+      .replaceAll(RegExp('[أإآٱ]'), 'ا')
+      .replaceAll('ى', 'ي')
+      .replaceAll('ؤ', 'و')
+      .replaceAll('ئ', 'ي')
+      .replaceAll(RegExp(r'\s+'), ' ');
 
   Future<Database> _openDatabase() async {
     final existing = _database;

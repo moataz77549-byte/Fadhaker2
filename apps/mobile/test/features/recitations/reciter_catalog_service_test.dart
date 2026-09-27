@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:fadhkur_mobile/features/recitations/data/reciter_catalog_service.dart';
+import 'package:fadhkur_mobile/features/listen/data/mp3quran_api.dart';
 
 void main() {
   ReciterCatalogService service(http.Client client, {String key = 'test-key'}) =>
@@ -32,7 +33,27 @@ void main() {
     final reciters = await catalog.load();
     expect(reciters, hasLength(1));
     expect(reciters.single.id, 'reciter-1');
-    expect((await catalog.loadTracks(reciters.single.id)).single.surahNumber, 1);
+    final track = (await catalog.loadTracks(reciters.single.id)).single;
+    expect(track.surahNumber, 1);
+    expect(track.downloadAllowed, isFalse);
+    catalog.dispose();
+  });
+
+  test('explicit track metadata is required to allow offline download', () async {
+    final catalog = service(MockClient((request) async {
+      if (request.url.path.endsWith('/reciter_tracks')) {
+        return http.Response(
+          '[{"surah_id":1,"audio_url":"https://example.com/001.mp3",'
+          '"quality":"high","metadata":{"source_provider":"licensed-test",'
+          '"download_allowed":true}}]',
+          200,
+        );
+      }
+      return http.Response('[]', 200);
+    }));
+    final track = (await catalog.loadTracks('reciter-1')).single;
+    expect(track.provider, 'licensed-test');
+    expect(track.downloadAllowed, isTrue);
     catalog.dispose();
   });
 
@@ -69,5 +90,24 @@ void main() {
     await expectLater(malformed.load(), throwsA(isA<ReciterCatalogException>()
         .having((e) => e.failure, 'failure', ReciterCatalogFailure.malformed)));
     malformed.dispose();
+  });
+
+  test('official moshafs remain available when curated backend is unconfigured', () async {
+    final official = Mp3QuranApi(client: MockClient((request) async => http.Response.bytes(
+      utf8.encode('{"reciters":[{"id":7,"name":"قارئ","moshaf":[{"id":11,'
+      '"name":"حفص مرتل","server":"https://server.mp3quran.net/test/",'
+      '"surah_list":"1,2"}]}]}'), 200,
+    )));
+    final catalog = ReciterCatalogService(
+      client: MockClient((request) async => throw StateError('backend should not be called')),
+      publishableKey: '', mp3QuranApi: official, useOfficialCatalog: true,
+    );
+    final reciters = await catalog.load();
+    expect(reciters.single.provider, 'MP3Quran.net');
+    final tracks = await catalog.loadTracks(reciters.single.id);
+    expect(tracks, hasLength(2));
+    expect(tracks.first.moshafName, 'حفص مرتل');
+    expect(tracks.first.downloadAllowed, isFalse);
+    catalog.dispose();
   });
 }

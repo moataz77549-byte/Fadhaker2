@@ -44,43 +44,64 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   Future<void> _setAdhkarReminders(bool enabled) async {
-    final prefs = await SharedPreferences.getInstance();
-    if (enabled) {
-      final allowed =
-          await localReminderService.requestAndroidNotificationPermission();
-      if (!allowed) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (enabled) {
+        final allowed =
+            await localReminderService.requestAndroidNotificationPermission();
+        if (!allowed) {
+          if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
             content: Text('لم يتم منح إذن الإشعارات على الجهاز.'),
-          ),
-        );
-        return;
+          ));
+          return;
+        }
+        await localReminderService.scheduleMorningEvening();
+      } else {
+        await localReminderService.cancelMorningEvening();
       }
-      await localReminderService.scheduleMorningEvening();
-    } else {
-      await localReminderService.cancelMorningEvening();
+      await prefs.setBool(_adhkarRemindersKey, enabled);
+      if (!mounted) return;
+      setState(() => _adhkarReminders = enabled);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(
+        enabled ? 'تم ضبط تذكير الصباح والمساء على الجهاز' :
+            'تم إيقاف تذكير الصباح والمساء',
+      )));
+    } catch (_) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('تعذّر تغيير التذكير. تحقق من إعدادات الإشعارات وحاول مجددًا.'),
+      ));
     }
-    await prefs.setBool(_adhkarRemindersKey, enabled);
-    if (mounted) setState(() => _adhkarReminders = enabled);
   }
 
   Future<void> _setCloudConsent(bool enabled) async {
-    if (enabled) {
-      final ok = await ref
-          .read(appServicesProvider)
-          .pushService
-          .requestConsentAndRegisterDevice(context);
-      if (!ok) {
-        if (mounted) setState(() => _notificationsConsent = false);
-        return;
+    try {
+      if (enabled) {
+        final ok = await ref
+            .read(appServicesProvider)
+            .pushService
+            .requestConsentAndRegisterDevice(context);
+        if (!ok) {
+          if (mounted) setState(() => _notificationsConsent = false);
+          if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('لم يُسجّل الجهاز للإشعارات. تحقق من الاتصال والأذونات ثم حاول مجددًا.'),
+          ));
+          return;
+        }
+      } else {
+        await ref.read(appServicesProvider).pushService.revokeConsent();
       }
-    } else {
-      await ref.read(appServicesProvider).pushService.revokeConsent();
-    }
-    if (mounted) {
-      setState(() => _notificationsConsent = enabled);
-      _prefsSectionKey.currentState?.refresh();
+      if (mounted) {
+        setState(() => _notificationsConsent = enabled);
+        _prefsSectionKey.currentState?.refresh();
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(
+          enabled ? 'تم تسجيل الجهاز لاستقبال الإشعارات العامة' :
+              'تم إيقاف تسجيل الإشعارات العامة',
+        )));
+      }
+    } catch (_) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('تعذّر تغيير الإشعارات العامة. حاول مجددًا عند توفر الاتصال.'),
+      ));
     }
   }
 

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -6,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import '../../../core/services/audio_playback_service.dart';
 import '../../../core/services/quran_download_service.dart';
 import '../../quran/data/surah_metadata.dart';
+import '../../recitations/data/reciter_catalog_service.dart';
 
 /// شاشة التنزيلات — تعرض مهام [QuranDownloadManager] مباشرة:
 /// طابور، إيقاف مؤقت، استئناف، إعادة محاولة، تقدّم، إلغاء، حذف،
@@ -18,64 +20,6 @@ class DownloadsScreen extends ConsumerStatefulWidget {
 }
 
 class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
-  Future<void> _startDownload() async {
-    var selectedSurah = allSurahs.first;
-    var reciterPath = 'Alafasy_64kbps';
-    final selection = await showDialog<(int, String)>(
-      context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, update) => AlertDialog(
-          title: const Text('تنزيل تلاوة سورة'),
-          content: Column(mainAxisSize: MainAxisSize.min, children: [
-            DropdownButtonFormField<int>(
-              initialValue: selectedSurah.number,
-              isExpanded: true,
-              decoration: const InputDecoration(labelText: 'السورة'),
-              items: allSurahs.map((s) => DropdownMenuItem(
-                value: s.number, child: Text(s.displayName),
-              )).toList(),
-              onChanged: (number) => update(() {
-                selectedSurah = allSurahs[number! - 1];
-              }),
-            ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
-              initialValue: reciterPath,
-              decoration: const InputDecoration(labelText: 'القارئ'),
-              items: const [
-                DropdownMenuItem(value: 'Alafasy_64kbps', child: Text('مشاري العفاسي')),
-                DropdownMenuItem(value: 'Alafasy_128kbps', child: Text('مشاري العفاسي — جودة أعلى')),
-              ],
-              onChanged: (path) => update(() => reciterPath = path!),
-            ),
-          ]),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('إلغاء')),
-            FilledButton(
-              onPressed: () => Navigator.pop(dialogContext, (selectedSurah.number, reciterPath)),
-              child: const Text('بدء التنزيل'),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (selection == null) return;
-    final surah = allSurahs[selection.$1 - 1];
-    try {
-      await quranDownloadManager.enqueueRange(
-        surahNumber: surah.number,
-        surahNameAr: surah.displayName,
-        reciterNameAr: 'مشاري العفاسي',
-        reciterPath: selection.$2,
-        firstAyah: 1,
-        lastAyah: surah.ayahs,
-      );
-    } catch (error) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('تعذّر بدء التنزيل: $error')),
-      );
-    }
-  }
 
   @override
   void initState() {
@@ -93,10 +37,6 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
           tooltip: 'تصفح القراء والمصاحف المتاحة',
           icon: const Icon(Icons.library_music_outlined),
           onPressed: () => Navigator.of(context).pushNamed('/reciters'),
-        ), IconButton(
-          tooltip: 'تنزيل سورة',
-          icon: const Icon(Icons.add_circle_outline),
-          onPressed: _startDownload,
         )],
         bottom: const TabBar(tabs: [
           Tab(text: 'تنزيلات القرآن'),
@@ -118,16 +58,17 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
                   const Text('لا توجد ملفات محملة حالياً',
                       style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 8),
-                  const Text('اختر سورة وقارئًا للتنزيل والاستماع دون اتصال.',
-                      textAlign: TextAlign.center),
-                      const SizedBox(height: 12),
-                      FilledButton.icon(onPressed: _startDownload,
-                        icon: const Icon(Icons.download), label: const Text('تنزيل سورة')),
-                      TextButton.icon(
-                        onPressed: () => Navigator.of(context).pushNamed('/reciters'),
-                        icon: const Icon(Icons.library_music_outlined),
-                        label: const Text('تصفح القراء والمصاحف الأخرى'),
-                      ),
+                  const Text(
+                    'يظهر زر التنزيل فقط للمصادر التي لديها سماح صريح '
+                    'بالاستخدام دون اتصال. المصادر غير المعتمدة تبقى للاستماع فقط.',
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 12),
+                  FilledButton.icon(
+                    onPressed: () => Navigator.of(context).pushNamed('/reciters'),
+                    icon: const Icon(Icons.library_music_outlined),
+                    label: const Text('تصفح القراء والمصاحف'),
+                  ),
                 ]),
               ),
             );
@@ -138,9 +79,186 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
             itemBuilder: (ctx, i) => _JobCard(job: jobs[i]),
           );
         },
-      ), const _DownloadedRecitationsTab()]),
+      ), const _MoshafCatalogTab()]),
     ));
   }
+}
+
+/// The catalog is independent of completed files: a first-time user can
+/// browse the official MP3Quran moshafs and queue an advertised surah here.
+class _MoshafCatalogTab extends ConsumerStatefulWidget {
+  const _MoshafCatalogTab();
+
+  @override
+  ConsumerState<_MoshafCatalogTab> createState() => _MoshafCatalogTabState();
+}
+
+class _MoshafCatalogTabState extends ConsumerState<_MoshafCatalogTab> {
+  final _search = TextEditingController();
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final catalog = ref.watch(recitersProvider);
+    return Column(children: [
+      Padding(
+        padding: const EdgeInsets.all(12),
+        child: TextField(
+          controller: _search,
+          onChanged: (_) => setState(() {}),
+          decoration: InputDecoration(
+            labelText: 'ابحث عن قارئ أو مصحف صوتي',
+            prefixIcon: const Icon(Icons.search),
+            suffixIcon: IconButton(
+              tooltip: 'تحديث الكتالوج',
+              icon: const Icon(Icons.refresh),
+              onPressed: () => ref.invalidate(recitersProvider),
+            ),
+          ),
+        ),
+      ),
+      Expanded(child: catalog.when(
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (error, _) => Center(child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(error is ReciterCatalogException ? error.userMessage :
+                'تعذّر تحميل كتالوج المصاحف'),
+            TextButton(onPressed: () => ref.invalidate(recitersProvider),
+                child: const Text('إعادة المحاولة')),
+          ],
+        )),
+        data: (reciters) {
+          final query = _search.text.trim();
+          final visible = reciters.where((r) => r.nameAr.contains(query) ||
+              r.riwaya.contains(query)).toList(growable: false);
+          if (visible.isEmpty) return const Center(child: Text('لا توجد مصاحف مطابقة'));
+          return ListView.builder(
+            itemCount: visible.length + 1,
+            itemBuilder: (context, index) {
+              if (index == 0) return const ExpansionTile(
+                leading: Icon(Icons.download_done_outlined),
+                title: Text('التلاوات المحفوظة على الجهاز'),
+                children: [SizedBox(height: 280, child: _DownloadedRecitationsTab())],
+              );
+              final reader = visible[index - 1];
+              return _ReciterMoshafs(key: ValueKey(reader.id), reciterId: reader.id,
+                  reciterName: reader.nameAr, count: reader.surahsCount);
+            },
+          );
+        },
+      )),
+    ]);
+  }
+}
+
+class _ReciterMoshafs extends ConsumerStatefulWidget {
+  const _ReciterMoshafs({super.key, required this.reciterId,
+      required this.reciterName, required this.count});
+  final String reciterId;
+  final String reciterName;
+  final int count;
+
+  @override
+  ConsumerState<_ReciterMoshafs> createState() => _ReciterMoshafsState();
+}
+
+class _ReciterMoshafsState extends ConsumerState<_ReciterMoshafs> {
+  bool _open = false;
+
+  @override
+  Widget build(BuildContext context) => ExpansionTile(
+    leading: const Icon(Icons.menu_book_outlined),
+    title: Text(widget.reciterName),
+    subtitle: Text('${widget.count} سورة متاحة'),
+    onExpansionChanged: (value) => setState(() => _open = value),
+    children: !_open ? const [] : [
+      ref.watch(reciterTracksProvider(widget.reciterId)).when(
+        loading: () => const Padding(padding: EdgeInsets.all(16),
+            child: CircularProgressIndicator()),
+        error: (error, _) => ListTile(
+          title: Text(error is ReciterCatalogException ? error.userMessage :
+              'تعذّر تحميل المصاحف'),
+          trailing: IconButton(icon: const Icon(Icons.refresh),
+              onPressed: () => ref.invalidate(reciterTracksProvider(widget.reciterId))),
+        ),
+        data: (tracks) {
+          final groups = <String, List<ReciterTrack>>{};
+          for (final track in tracks) {
+            final uri = Uri.tryParse(track.audioUrl);
+            if (track.audioUrl.isEmpty || track.surahNumber < 1 ||
+                track.surahNumber > 114 || uri == null || uri.scheme != 'https' ||
+                !(uri.host == 'mp3quran.net' ||
+                  uri.host.endsWith('.mp3quran.net'))) continue;
+            groups.putIfAbsent(track.moshafId, () => []).add(track);
+          }
+          if (groups.isEmpty) return const ListTile(
+              title: Text('لا توجد سور قابلة للتنزيل لهذا القارئ'));
+          return Column(children: groups.entries.map((group) => ExpansionTile(
+            title: Text(group.value.first.moshafName.isEmpty
+                ? 'مصحف ${widget.reciterName}' : group.value.first.moshafName),
+            subtitle: Text(
+              group.value.any((track) => track.downloadAllowed)
+                  ? '${group.value.length} سورة • تتوفر تنزيلات معتمدة'
+                  : '${group.value.length} سورة • استماع فقط حتى اعتماد حقوق التنزيل',
+            ),
+            children: group.value.map((track) {
+              final surah = allSurahs[track.surahNumber - 1];
+              return ListTile(
+                title: Text(surah.displayName),
+                trailing: track.downloadAllowed
+                    ? IconButton(
+                        icon: const Icon(Icons.download_for_offline_outlined),
+                        tooltip: 'تنزيل ${surah.displayName}',
+                        onPressed: () async {
+                          final messenger = ScaffoldMessenger.of(context);
+                          try {
+                            final job =
+                                await quranDownloadManager.enqueueRecitation(
+                              surahNumber: surah.number,
+                              surahNameAr: surah.displayName,
+                              reciterNameAr: widget.reciterName,
+                              reciterId: widget.reciterId,
+                              moshafId: track.moshafId,
+                              audioUrl: track.audioUrl,
+                              downloadAllowed: track.downloadAllowed,
+                            );
+                            if (!mounted) return;
+                            messenger.showSnackBar(SnackBar(
+                              content: Text(
+                                job.status == DownloadJobStatus.completed
+                                    ? 'التلاوة محفوظة على الجهاز'
+                                    : 'أُضيفت إلى التنزيلات؛ يظهر تقدمها في التبويب الأول',
+                              ),
+                            ));
+                          } catch (_) {
+                            if (mounted) {
+                              messenger.showSnackBar(const SnackBar(
+                                content: Text(
+                                  'فشل بدء التنزيل. تحقق من المصدر والاتصال ثم حاول مجددًا.',
+                                ),
+                              ));
+                            }
+                          }
+                        },
+                      )
+                    : const Tooltip(
+                        message:
+                            'التنزيل غير متاح حتى يعتمد إذن الاستخدام دون اتصال',
+                        child: Icon(Icons.lock_outline),
+                      ),
+              );
+            }).toList(growable: false),
+          )).toList(growable: false));
+        },
+      ),
+    ],
+  );
 }
 
 class _DownloadedRecitationsTab extends ConsumerStatefulWidget {
@@ -152,6 +270,30 @@ class _DownloadedRecitationsTab extends ConsumerStatefulWidget {
 
 class _DownloadedRecitationsTabState extends ConsumerState<_DownloadedRecitationsTab> {
   late Future<List<File>> _files = _scan();
+  late final StreamSubscription<List<DownloadJob>> _changes;
+  Set<String> _completed = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _completed = quranDownloadManager.jobs
+        .where((job) => job.sourceUrl != null && job.status == DownloadJobStatus.completed)
+        .map((job) => job.id).toSet();
+    _changes = quranDownloadManager.jobsStream.listen((jobs) {
+      final completed = jobs
+          .where((job) => job.sourceUrl != null && job.status == DownloadJobStatus.completed)
+          .map((job) => job.id).toSet();
+      if (completed.length == _completed.length && _completed.containsAll(completed)) return;
+      _completed = completed;
+      if (mounted) setState(() => _files = _scan());
+    });
+  }
+
+  @override
+  void dispose() {
+    _changes.cancel();
+    super.dispose();
+  }
 
   Future<List<File>> _scan() async {
     final root = await getApplicationDocumentsDirectory();
@@ -287,7 +429,8 @@ class _JobCard extends ConsumerWidget {
             const SizedBox(height: 12),
             if (!isCompleted) ...[
               LinearProgressIndicator(
-                value: job.progress,
+                value: job.sourceUrl != null && job.totalBytes == null
+                    ? null : job.progress,
                 backgroundColor: Colors.grey.withValues(alpha: 0.2),
                 color: const Color(0xFF2E9E9E),
               ),
@@ -299,8 +442,8 @@ class _JobCard extends ConsumerWidget {
                     job.sourceUrl == null
                         ? '${job.progressPercent}% • ${job.completedAyahs}/${job.totalAyahs} آية'
                         : job.totalBytes != null
-                            ? '${job.progressPercent}% • ${(job.downloadedBytes / (1024 * 1024)).toStringAsFixed(1)} ميجابايت'
-                            : 'تنزيل التلاوة • ${(job.downloadedBytes / (1024 * 1024)).toStringAsFixed(1)} ميجابايت',
+                            ? '${job.progressPercent}% • ${(job.downloadedBytes / (1024 * 1024)).toStringAsFixed(1)} / ${(job.totalBytes! / (1024 * 1024)).toStringAsFixed(1)} م.ب'
+                            : '${downloadJobStatusLabel(job.status)} • ${(job.downloadedBytes / (1024 * 1024)).toStringAsFixed(1)} م.ب • الحجم الكلي غير متاح',
                     style: const TextStyle(color: Color(0xFF5B677A), fontSize: 12),
                   ),
                   Row(

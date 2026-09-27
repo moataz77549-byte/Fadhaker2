@@ -115,6 +115,7 @@ class DownloadJob {
   final int firstAyah;
   final int lastAyah;
   final String? expectedSha256;
+  final bool downloadAllowed;
   final DownloadJobStatus status;
   final int completedAyahs;
   final int downloadedBytes;
@@ -136,6 +137,7 @@ class DownloadJob {
     required this.firstAyah,
     required this.lastAyah,
     this.expectedSha256,
+    this.downloadAllowed = false,
     this.status = DownloadJobStatus.queued,
     this.completedAyahs = 0,
     this.downloadedBytes = 0,
@@ -178,6 +180,7 @@ class DownloadJob {
       firstAyah: firstAyah,
       lastAyah: lastAyah,
       expectedSha256: expectedSha256,
+      downloadAllowed: downloadAllowed,
       status: status ?? this.status,
       completedAyahs: completedAyahs ?? this.completedAyahs,
       downloadedBytes: downloadedBytes ?? this.downloadedBytes,
@@ -201,6 +204,7 @@ class DownloadJob {
         'firstAyah': firstAyah,
         'lastAyah': lastAyah,
         'expectedSha256': expectedSha256,
+        'downloadAllowed': downloadAllowed,
         'status': status.name,
         'completedAyahs': completedAyahs,
         'downloadedBytes': downloadedBytes,
@@ -230,6 +234,7 @@ class DownloadJob {
       firstAyah: (json['firstAyah'] as num?)?.toInt() ?? 1,
       lastAyah: (json['lastAyah'] as num?)?.toInt() ?? 1,
       expectedSha256: json['expectedSha256']?.toString(),
+      downloadAllowed: json['downloadAllowed'] == true,
       status: status,
       completedAyahs: (json['completedAyahs'] as num?)?.toInt() ?? 0,
       downloadedBytes: (json['downloadedBytes'] as num?)?.toInt() ?? 0,
@@ -373,7 +378,14 @@ class QuranDownloadManager {
             final job = DownloadJob.fromJson(Map<String, dynamic>.from(e));
             // المهام الملغاة لا تُستعاد.
             if (job.status != DownloadJobStatus.canceled) {
-              _jobs[job.id] = job;
+              _jobs[job.id] =
+                  job.status == DownloadJobStatus.queued && !job.downloadAllowed
+                      ? job.copyWith(
+                          status: DownloadJobStatus.failed,
+                          errorMessage:
+                              'أُوقف التنزيل حتى اعتماد حقوق المصدر للاستخدام دون اتصال.',
+                        )
+                      : job;
             }
           }
         }
@@ -390,7 +402,11 @@ class QuranDownloadManager {
     required String reciterNameAr,
     required String reciterPath,
     String? expectedSha256,
+    bool downloadAllowed = false,
   }) async {
+    if (!downloadAllowed) {
+      throw StateError('التنزيل غير متاح لهذا المصدر حتى اعتماد حقوق الاستخدام دون اتصال.');
+    }
     await init();
     // منع التكرار: مهمة نشطة لنفس السورة والقارئ تُعاد كما هي.
     for (final job in _jobs.values) {
@@ -415,6 +431,7 @@ class QuranDownloadManager {
       firstAyah: 1,
       lastAyah: meta.ayahCount,
       expectedSha256: (expectedSha256?.isNotEmpty ?? false) ? expectedSha256 : null,
+      downloadAllowed: true,
       createdAt: now,
       updatedAt: now,
     );
@@ -435,7 +452,11 @@ class QuranDownloadManager {
     required int firstAyah,
     required int lastAyah,
     String? expectedSha256,
+    bool downloadAllowed = false,
   }) async {
+    if (!downloadAllowed) {
+      throw StateError('التنزيل غير متاح لهذا المصدر حتى اعتماد حقوق الاستخدام دون اتصال.');
+    }
     await init();
     if (firstAyah < 1 || lastAyah < firstAyah) {
       throw ArgumentError('نطاق آيات غير صالح: $firstAyah-$lastAyah');
@@ -450,6 +471,7 @@ class QuranDownloadManager {
       firstAyah: firstAyah,
       lastAyah: lastAyah,
       expectedSha256: (expectedSha256?.isNotEmpty ?? false) ? expectedSha256 : null,
+      downloadAllowed: true,
       createdAt: now,
       updatedAt: now,
     );
@@ -471,7 +493,11 @@ class QuranDownloadManager {
     required String reciterId,
     required String moshafId,
     required String audioUrl,
+    bool downloadAllowed = false,
   }) async {
+    if (!downloadAllowed) {
+      throw StateError('التنزيل غير متاح لهذا المصدر حتى اعتماد حقوق الاستخدام دون اتصال.');
+    }
     final uri = Uri.tryParse(audioUrl);
     if (surahNumber < 1 || surahNumber > 114 || uri == null ||
         uri.scheme != 'https' ||
@@ -496,6 +522,7 @@ class QuranDownloadManager {
       surahNumber: surahNumber, surahNameAr: surahNameAr,
       reciterNameAr: reciterNameAr, reciterPath: identity,
       sourceUrl: audioUrl, firstAyah: 1, lastAyah: 1,
+      downloadAllowed: true,
       localPath: file.path, createdAt: now, updatedAt: now,
       status: await file.exists() && await file.length() > 0
           ? DownloadJobStatus.completed : DownloadJobStatus.queued,
@@ -525,6 +552,15 @@ class QuranDownloadManager {
     final job = _jobs[id];
     if (job == null) return;
     if (job.status != DownloadJobStatus.paused && job.status != DownloadJobStatus.failed) return;
+    if (!job.downloadAllowed) {
+      _jobs[id] = job.copyWith(
+        status: DownloadJobStatus.failed,
+        errorMessage: 'لا يمكن استئناف التنزيل قبل اعتماد حقوق المصدر.',
+      );
+      await _persist();
+      _emit();
+      return;
+    }
     _jobs[id] = job.copyWith(status: DownloadJobStatus.queued, errorMessage: null, attempts: 0);
     await _persist();
     _emit();
@@ -581,7 +617,9 @@ class QuranDownloadManager {
 
   void _pump() {
     if (_workerRunning) return;
-    final next = jobs.where((j) => j.status == DownloadJobStatus.queued).toList();
+    final next = jobs
+        .where((j) => j.status == DownloadJobStatus.queued && j.downloadAllowed)
+        .toList();
     if (next.isEmpty) return;
     _workerRunning = true;
     // الأقدم أولًا.

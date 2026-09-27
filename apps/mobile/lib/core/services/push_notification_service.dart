@@ -326,11 +326,11 @@ class PushNotificationService {
       return false;
     }
 
-    await prefs.setBool(NotificationPreferences.consentKey, true);
     final fcmToken = await FirebaseMessaging.instance.getToken();
     if (fcmToken == null) return false;
 
-    await _registerOrUpdateSupabaseInstallation(fcmToken);
+    if (!await _registerOrUpdateSupabaseInstallation(fcmToken)) return false;
+    await prefs.setBool(NotificationPreferences.consentKey, true);
     await _applyStoredPreferences();
     return true;
   }
@@ -424,9 +424,9 @@ class PushNotificationService {
   /// Register or update installation in Supabase (idempotent: the Edge
   /// Function upserts on installation_id, so a token refresh updates the
   /// existing row instead of creating a duplicate).
-  Future<void> _registerOrUpdateSupabaseInstallation(String fcmToken) async {
+  Future<bool> _registerOrUpdateSupabaseInstallation(String fcmToken) async {
     try {
-      if (!SupabaseConfig.isConfigured) return;
+      if (!SupabaseConfig.isConfigured) return false;
       final prefs = await SharedPreferences.getInstance();
       _currentInstallationId ??= prefs.getString('supabase_installation_id');
       final installationSecret = prefs.getString('supabase_installation_secret') ?? _newSecret();
@@ -463,8 +463,10 @@ class PushNotificationService {
 
       await prefs.setBool('fcm_pending_server_revoke', false);
       debugPrint('Supabase notification installation synced successfully');
+      return true;
     } catch (_) {
       debugPrint('Notification registration unavailable');
+      return false;
     }
   }
 

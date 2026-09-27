@@ -4,6 +4,7 @@ import 'package:fadhkur_mobile/core/services/quran_download_service.dart';
 DownloadJob _job({
   DownloadJobStatus status = DownloadJobStatus.queued,
   int completedAyahs = 0,
+  bool downloadAllowed = false,
 }) {
   final now = DateTime(2026, 9, 23);
   return DownloadJob(
@@ -14,6 +15,7 @@ DownloadJob _job({
     reciterPath: 'Reciter_64kbps',
     firstAyah: 1,
     lastAyah: 83,
+    downloadAllowed: downloadAllowed,
     status: status,
     completedAyahs: completedAyahs,
     createdAt: now,
@@ -63,7 +65,11 @@ void main() {
     });
 
     test('json round-trip preserves fields', () {
-      final original = _job(status: DownloadJobStatus.paused, completedAyahs: 10)
+      final original = _job(
+        status: DownloadJobStatus.paused,
+        completedAyahs: 10,
+        downloadAllowed: true,
+      )
           .copyWith(
         downloadedBytes: 12345,
         localPath: '/tmp/file.mp3',
@@ -79,6 +85,13 @@ void main() {
       expect(restored.localPath, '/tmp/file.mp3');
       expect(restored.actualSha256, 'abc');
       expect(restored.attempts, 2);
+      expect(restored.downloadAllowed, isTrue);
+    });
+
+    test('legacy jobs fail closed when no rights flag exists', () {
+      final legacy = _job().toJson()..remove('downloadAllowed');
+      final restored = DownloadJob.fromJson(legacy);
+      expect(restored.downloadAllowed, isFalse);
     });
 
     test('restoring a downloading job re-queues it (resume after restart)', () {
