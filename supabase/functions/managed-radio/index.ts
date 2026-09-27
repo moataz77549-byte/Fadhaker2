@@ -11,17 +11,21 @@ serve(async (req: Request) => {
 
   const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-  // Return currently active playing radio stream and queue state
+  // Return currently active playing radio stream and queue state.
+  // Honest contract: reflects the radio.now_playing row as-is; no fabricated
+  // titles and no hardcoded engine claims. Absent row => null (client shows
+  // its own empty state), never fake "live" data.
   const { data: nowPlaying } = await supabase
     .schema('radio')
     .from('now_playing')
     .select('*')
     .limit(1);
 
+  const row = nowPlaying?.[0] ?? null;
+
   return new Response(JSON.stringify({
-    managedPlayoutActive: true,
-    engine: 'Liquidsoap 2.2 + Icecast',
-    nowPlaying: nowPlaying?.[0] || { title: 'البث القرآني المباشر', started_at: new Date().toISOString() },
+    managedPlayoutActive: row !== null,
+    nowPlaying: row,
     serverTimestamp: new Date().toISOString()
   }), {
     status: 200,
