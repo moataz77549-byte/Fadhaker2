@@ -39,12 +39,16 @@ class ReciterTrack {
     required this.quality,
     this.moshafId = '',
     this.moshafName = '',
+    this.provider = '',
+    this.downloadAllowed = false,
   });
   final int surahNumber;
   final String audioUrl;
   final String quality;
   final String moshafId;
   final String moshafName;
+  final String provider;
+  final bool downloadAllowed;
 }
 
 class ReciterCatalogService {
@@ -75,7 +79,7 @@ class ReciterCatalogService {
   static const _select =
       'id,name_ar,default_riwayah,bio_arabic,metadata,is_featured';
   static const _trackSelect =
-      'surah_id,audio_url,quality,bitrate_kbps,is_active';
+      'surah_id,audio_url,quality,bitrate_kbps,is_active,metadata';
 
   Future<List<ReciterModel>> load({bool forceRefresh = false}) async {
     List<Map<String, dynamic>> rows;
@@ -171,8 +175,16 @@ class ReciterCatalogService {
           for (final surah in available.toList()..sort()) {
             final url = AudioUrlBuilder.forMp3Quran(server, surah, available);
             if (url == null) continue;
-            tracks.add(ReciterTrack(surahNumber: surah, audioUrl: url.toString(),
-                quality: name, moshafId: moshafId, moshafName: name));
+            tracks.add(ReciterTrack(
+              surahNumber: surah,
+              audioUrl: url.toString(),
+              quality: name,
+              moshafId: moshafId,
+              moshafName: name,
+              provider: 'mp3quran',
+              // Streaming availability is not download permission.
+              downloadAllowed: false,
+            ));
           }
         }
       }
@@ -185,10 +197,16 @@ class ReciterCatalogService {
       'order': 'surah_id.asc',
     }, forceRefresh: forceRefresh);
     return rows.map((row) {
+      final metadata = row['metadata'] is Map
+          ? Map<String, dynamic>.from(row['metadata'] as Map)
+          : const <String, dynamic>{};
       return ReciterTrack(
         surahNumber: (row['surah_id'] as num?)?.toInt() ?? 0,
         audioUrl: '${row['audio_url'] ?? ''}',
         quality: '${row['quality'] ?? ''}',
+        provider: '${metadata['source_provider'] ?? metadata['source'] ?? ''}',
+        // Only an explicit rights-reviewed flag enables offline download.
+        downloadAllowed: metadata['download_allowed'] == true,
       );
     }).where((t) => t.surahNumber > 0 && t.audioUrl.isNotEmpty).toList(growable: false);
   }
