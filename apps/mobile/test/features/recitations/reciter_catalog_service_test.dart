@@ -33,7 +33,27 @@ void main() {
     final reciters = await catalog.load();
     expect(reciters, hasLength(1));
     expect(reciters.single.id, 'reciter-1');
-    expect((await catalog.loadTracks(reciters.single.id)).single.surahNumber, 1);
+    final track = (await catalog.loadTracks(reciters.single.id)).single;
+    expect(track.surahNumber, 1);
+    expect(track.downloadAllowed, isFalse);
+    catalog.dispose();
+  });
+
+  test('explicit track metadata is required to allow offline download', () async {
+    final catalog = service(MockClient((request) async {
+      if (request.url.path.endsWith('/reciter_tracks')) {
+        return http.Response(
+          '[{"surah_id":1,"audio_url":"https://example.com/001.mp3",'
+          '"quality":"high","metadata":{"source_provider":"licensed-test",'
+          '"download_allowed":true}}]',
+          200,
+        );
+      }
+      return http.Response('[]', 200);
+    }));
+    final track = (await catalog.loadTracks('reciter-1')).single;
+    expect(track.provider, 'licensed-test');
+    expect(track.downloadAllowed, isTrue);
     catalog.dispose();
   });
 
@@ -87,6 +107,7 @@ void main() {
     final tracks = await catalog.loadTracks(reciters.single.id);
     expect(tracks, hasLength(2));
     expect(tracks.first.moshafName, 'حفص مرتل');
+    expect(tracks.first.downloadAllowed, isFalse);
     catalog.dispose();
   });
 }
